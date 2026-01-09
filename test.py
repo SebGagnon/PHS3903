@@ -1,1 +1,1 @@
-print('ceci était un test')
+print('ceci fut un test')
