@@ -1,15 +1,20 @@
+'''
+Pour une raison que la raison ignore, lorsque le pas de discrétisation (dx) diminue en dessous de 0.075, les résultats deviennent faux.
+Il est attendu que Tmax_eq soit autour de 37 degrés celsius comme dans la partie 2 i), mais avec un pas de discrétisation de 0.075 je trouve une valeur inférieure.
+'''
+
 import time
 import numpy as np
 import matplotlib.pyplot as plt
 
 # ======================================================
-# PARAMÈTRES PHYSIQUES (PDF)
+# PARAMÈTRES PHYSIQUES 
 # ======================================================
 L = 2.0                 # épaisseur du mur [m]
 k = 1.0                 # conductivité thermique
 h = 10.0                # coefficient convectif
-Ta = -15             # température ambiante [°C]
-dx = 0.01
+Ta = -15                # température ambiante [°C]
+dx = 0.075
 
 rho = 2000
 Cv = 1000
@@ -22,15 +27,13 @@ N = int(L/dx) + 1 # Nombre de points sur la grid de la distance
 x = np.linspace(0, L, N)
 
 # ======================================================
-# CONDITIONS FRONTIÈRES CONVECTIVES (PDF)
-# -k dT/dx = h (T - Ta)
-# ==> -k dT/dx - h T + h Ta = 0
+# CONDITIONS FRONTIÈRES CONVECTIVES
 # ======================================================
 
 c1, c2, c3 = -k, h, -h*Ta
 d1, d2, d3 = -k,  -h, h*Ta
 
-alpha = Cv * rho / k 
+alpha = (Cv * rho / k)
 T = np.ones(N) * Ta
 
 # Matrice M
@@ -48,10 +51,10 @@ A = np.diag(-2*np.ones(N), 0) + np.diag(np.ones(N-1), -1) + np.diag(np.ones(N-1)
 A[0, 0], A[0, 1], A[0, 2] = 2* c2 *dx -3*c1, 4*c1, -c1
 A[N-1, N-3], A[N-1, N-2], A[N-1, N-1] = d1, -4*d1, 2*d2*dx+2*d1
 
-
+# Source de chaleur
 g = - q * np.exp(-x / dL) / k
 
-
+# Vecteur b
 b = np.zeros(N)
 b[1:N-2] = g[1:N-2] * dx**2
 b[0] = -2*c3*dx
@@ -60,6 +63,7 @@ b[N-1] = -2*d3*dx
 
 t_max = 1e7
 dt = dx**2 * alpha
+
 
 # ======================================================
 # SCHÉMA TEMPOREL
@@ -74,14 +78,12 @@ T_eq = None
 t = 0
 
 #element1 = (M + (1 - xi) * dt / (alpha *dx**2) * A)
-
-
 #element2 = dt / (alpha *dx**2) * (xi * b + (1-xi)*b)
 #element2 = dt / (alpha *dx**2) * b
 
 while t < t_max:
 
-    b_prime =  (M + (1 - xi) * dt / (alpha *dx**2) * A) @ T + dt / (alpha *dx**2) * b
+    b_prime =  (M + (1 - xi) * dt / (alpha * (dx**2)) * A) @ T - dt / (alpha * (dx**2)) * b
     T = np.linalg.solve(A_prime, b_prime)
 
     Tmax = np.max(T)
@@ -95,9 +97,10 @@ time_list.append(t)
 # ======================================================
 # CALCUL DU TEMPS D'ÉQUILIBRE
 # ======================================================
-Tmax_eq = T_max_list[-1]
-threshold = T0_max + 0.95 * (Tmax_eq - T0_max)
+Tmax_eq = np.max(T)
+print(f"La valeur de température max à l'équilibre est : {Tmax_eq}")
 
+threshold = T0_max + 0.95 * (Tmax_eq - T0_max)
 tau_eq = None
 
 for ti, Tm in zip(time_list, T_max_list):
