@@ -6,15 +6,15 @@ import matplotlib.pyplot as plt
 # PARAMÈTRES PHYSIQUES 
 # ======================================================
 L = 2.0                 # épaisseur du mur [m]
-k = 1.0                 # conductivité thermique
-h = 10.0                # coefficient convectif
+k = 0.5                 # conductivité thermique
+h = 20                # coefficient convectif
 Ta = -15                # température ambiante [°C]
 dx = 0.01
 
 rho = 2000
 Cv = 1000
-dL = 0.5
-xi = 0.75
+dL = 0.1
+xi = 0.5
 q = 400
 
 
