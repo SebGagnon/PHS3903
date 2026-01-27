@@ -94,16 +94,10 @@ for fact in fact_ar:
         for j in np.arange(1,Nx+1,1):
             # remplir la ligne pl de la matrice M
             pl=(i-1)*Nx+j;
+            x = (j-1)*d;
+            y = (i-1)*d;
             
-            if (((i>1) and (i<Ny)) and ((j>1) and (j<Nx)) and ((j*d!=Lm) or (j*d!=(Lx-Lm)))):
-                # noeud qui est strictement à l'intérieur de la cellule de simulation
-                pc=pl;M[pl-1,pc-1]=-4; # contribution de noeud (i,j)
-                pc=(i-1)*Nx+j-1;M[pl-1,pc-1]=1; # contribution de noeud (i,j-1)
-                pc=(i-1)*Nx+j+1;M[pl-1,pc-1]=1; # contribution de noeud (i,j+1)
-                pc=(i-2)*Nx+j;M[pl-1,pc-1]=1; # contribution de noeud (i-1,j)
-                pc=(i)*Nx+j;M[pl-1,pc-1]=1; # contribution de noeud (i+1,j)
-                b[pl-1]=-d**2*S[i-1,j-1]/k[i-1,j-1];
-            elif (i==1):
+            if (i==1):
                 # noeud sur le plafond y=0
                 pc=pl;M[pl-1,pc-1]=1; # contribution de noeud (1,j)
                 b[pl-1]=Tp;
@@ -111,14 +105,6 @@ for fact in fact_ar:
                 # noeud sur le plancher y=Ly
                 pc=pl;M[pl-1,pc-1]=1; # contribution de noeud (Ny,j)
                 b[pl-1]=Tp;
-            elif ((j*d==Lm) or (j*d==(Lx-Lm))):
-                #frontière entre mur et intérieures
-                pc=pl; M[pl-1,pc-1]=3*(k[Ly/2, 1]-k[Ly/2, Lx/2])
-                pc=pl-1; M[pl-1,pc-1]=4*k[Ly/2, 1]
-                pc=pl+1; M[pl-1,pc-1]=-4*k[Ly/2, Lx/2]
-                pc=pl-2; M[pl-1,pc-1]=1*k[Ly/2, 1]
-                pc=pl+2; M[pl-1,pc-1]=-1*k[Ly/2, Lx/2]
-                b[pl-1]=0
             elif (j==1):
                 # noeud à la surface externe du mur x=0
                 pc=pl;M[pl-1,pc-1]=3+2*d*h/k[i-1,j-1]; # contribution de noeud (i,1)
@@ -132,7 +118,13 @@ for fact in fact_ar:
                 pc=(i-1)*Nx+j-2;M[pl-1,pc-1]=1; # contribution de noeud (i,Nx-2)
                 b[pl-1]=2*d*h*Ta/k[i-1,j-1];
             else:
-                print('Erreur dans la définition de la matrice de coefficients');
+                # noeud qui est strictement à l'intérieur de la cellule de simulation
+                pc=pl;M[pl-1,pc-1]=-4; # contribution de noeud (i,j)
+                pc=(i-1)*Nx+j-1;M[pl-1,pc-1]=1; # contribution de noeud (i,j-1)
+                pc=(i-1)*Nx+j+1;M[pl-1,pc-1]=1; # contribution de noeud (i,j+1)
+                pc=(i-2)*Nx+j;M[pl-1,pc-1]=1; # contribution de noeud (i-1,j)
+                pc=(i)*Nx+j;M[pl-1,pc-1]=1; # contribution de noeud (i+1,j)
+                b[pl-1]=-d**2*S[i-1,j-1]/k[i-1,j-1];
 
     toc=time.time_ns();
     tini_ar[ci]=(toc-tic)/1.0e9; #temps en [s]  
@@ -160,7 +152,7 @@ plt.show()
 plt.figure(2)
 plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,k);
 plt.colorbar(mappable=None, cax=None, ax=None);
-plt.title('k(x,y) [W/($m^2\cdot$K)]')
+plt.title(r'k(x,y) [W/(m$^2\cdot$K)]')  # Fixed escape sequence
 plt.xlabel('x [m]')    
 plt.ylabel('y [m]')
 plt.show()
@@ -193,3 +185,5 @@ plt.title('Temps de calcul(initialisation et inversion)')
 plt.xlabel('Pas $d_x=d_y$ [m]')
 plt.ylabel('t [s]')
 plt.legend(['$t_{initialisation}$','$t_{inversion}$'])
+
+plt.show()
