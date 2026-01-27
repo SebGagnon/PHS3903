@@ -117,6 +117,32 @@ for fact in fact_ar:
                 pc=(i-1)*Nx+j-1;M[pl-1,pc-1]=-4; # contribution de noeud (i,Nx-1)
                 pc=(i-1)*Nx+j-2;M[pl-1,pc-1]=1; # contribution de noeud (i,Nx-2)
                 b[pl-1]=2*d*h*Ta/k[i-1,j-1];
+            elif ((x==Lm or x==Lx-Lm) and (y<=Ly-Lm and y>=Lm)):
+                if x==Lm:
+                    sens = -1
+                else : 
+                    sens = 1
+                pc=pl;M[pl-1,pc-1]=3*(km+ka)
+                pc=pl+sens;M[pl-1,pc-1]=-4*ka
+                pc=pl-sens;M[pl-1,pc-1]=-4*km
+                pc=pl+2*sens;M[pl-1,pc-1]=ka
+                pc=pl-2*sens;M[pl-1,pc-1]=km
+                b[pl-1]=0
+
+
+            elif ((y==Lm or y==Ly-Lm) and (x<=Lx-Lm and x>=Lm)):
+                if y==Lm:
+                    sens = -1
+                else : 
+                    sens = 1
+                pc=pl;M[pl-1,pc-1]=3*(km+ka)
+                pc=(i-1+sens)*Nx+j;M[pl-1,pc-1]=-4*ka
+                pc=(i-1-sens)*Nx+j;M[pl-1,pc-1]=-4*km
+                pc=(i-1+2*sens)*Nx+j;M[pl-1,pc-1]=ka
+                pc=(i-1-2*sens)*Nx+j;M[pl-1,pc-1]=km
+                b[pl-1]=0
+
+                
             else:
                 # noeud qui est strictement à l'intérieur de la cellule de simulation
                 pc=pl;M[pl-1,pc-1]=-4; # contribution de noeud (i,j)
@@ -125,7 +151,7 @@ for fact in fact_ar:
                 pc=(i-2)*Nx+j;M[pl-1,pc-1]=1; # contribution de noeud (i-1,j)
                 pc=(i)*Nx+j;M[pl-1,pc-1]=1; # contribution de noeud (i+1,j)
                 b[pl-1]=-d**2*S[i-1,j-1]/k[i-1,j-1];
-
+    print(M)
     toc=time.time_ns();
     tini_ar[ci]=(toc-tic)/1.0e9; #temps en [s]  
     
