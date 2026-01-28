@@ -225,6 +225,9 @@ plt.legend(['$t_{initialisation}$','$t_{inversion}$'])
 plt.savefig("Img456/Temps.pdf")
 plt.close()
 
+print(f"Les différentes valeurs de Tm selon le pas sont: {Tm_ar[1::]}")
+print(f"Les différentes valeurs de  l'erreur sur Tm selon le pas sont: {Err_ar[::-1]}")
+
 p = np.polyfit(np.log(d_ar[::-1]), np.log(mem_ar[::-1]), 1)
 exp_mem = p[0]
 Coeff_mem= np.exp(p[1])
