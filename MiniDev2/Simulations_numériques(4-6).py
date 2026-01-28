@@ -28,7 +28,7 @@ Ly=2.4;  #[m]
 # Parametres d'un mur d'isolation thermique
 Lm=0.4; #m ; Épaisseur du mur en brique
 km=0.85;#W/(m*K); La conductivité thermique de la brique
-h=1; #W/(m^2*K); Coefficient de transfert thermique sur les surfaces extérieures du mur
+h=10; #W/(m^2*K); Coefficient de transfert thermique sur les surfaces extérieures du mur
 
 # Paramètres de l'air qui remplit l'appartement
 ka=0.024;
@@ -65,7 +65,7 @@ for fact in fact_ar:
             # La source est intégrée dans les parties intérieures du mur à x=Lm et à x=Lx-Lm et
             # il occupe les tiers du mur dans la direction verticale
             dL=0.1;
-            q=1.0e3;# W/m^3;
+            q=2.0e3;# W/m^3;
             if ((x<=Lm) and (y<=Ly/3+Lm) and (y>Lm)):
                 # À l'intérieur de l'élément chauffant
                 S[i-1,j-1]=q*np.exp(-((x-Lm)/dL)**2);
@@ -171,39 +171,39 @@ for fact in fact_ar:
     
     Tm_ar[ci]=Tr[int(np.rint(Ly/d/2+1))-1,int(np.rint(Lx/d/2+1))-1]; # température au milieu du domaine de calcul
 
-plt.figure(1)
-plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,S);
-plt.colorbar(mappable=None, cax=None, ax=None);
-plt.title('S(x,y) [W/$m^3$]')
-plt.xlabel('x [m]')    
-plt.ylabel('y [m]')
-plt.savefig("Img456/S.pdf")
-plt.close()
+#plt.figure(1)
+#plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,S);
+#plt.colorbar(mappable=None, cax=None, ax=None);
+#plt.title('S(x,y) [W/$m^3$]')
+#plt.xlabel('x [m]')    
+#plt.ylabel('y [m]')
+#plt.savefig("Img456/S.pdf")
+#plt.close()
 
-plt.figure(2)
-plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,k);
-plt.colorbar(mappable=None, cax=None, ax=None);
-plt.title('k(x,y) [W/($m^2\\cdot$K)]')
-plt.xlabel('x [m]')    
-plt.ylabel('y [m]')
-plt.savefig("Img456/k.pdf")
-plt.close()
+#plt.figure(2)
+#plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,k);
+#plt.colorbar(mappable=None, cax=None, ax=None);
+#plt.title('k(x,y) [W/($m^2\\cdot$K)]')
+#plt.xlabel('x [m]')    
+#plt.ylabel('y [m]')
+#plt.savefig("Img456/k.pdf")
+#plt.close()
 
 plt.figure(3)
 plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,Tr);
 plt.colorbar(mappable=None, cax=None, ax=None);
 plt.title('T(x,y) [$^o$C]')
-plt.xlabel('x [m]')    
-plt.ylabel('y [m]')
-plt.savefig("Img456/T.pdf")
+plt.xlabel('x [m]', fontsize = 16)    
+plt.ylabel('y [m]', fontsize = 16)
+plt.savefig("Img456/T.png")
 plt.close()
 
 plt.figure(4)
 plt.loglog(d_ar[::-1],mem_ar[::-1]/1024.0**3,'-o')
 # plt.title('Exigences de mémoire')
-plt.xlabel('Pas $d_x=d_y$ [m]', frontsize = 16)
-plt.ylabel('Mémoire [Gb]', frontsize = 16)
-plt.savefig("Img456/Ram.pdf")
+plt.xlabel('Pas $d_x=d_y$ [m]', fontsize = 16)
+plt.ylabel('Mémoire [Gb]', fontsize = 16)
+plt.savefig("Img456/Ram.png")
 plt.close()
 
 plt.figure(5)
@@ -213,7 +213,7 @@ plt.loglog(d_Err_ar[::-1],Err_ar[::-1],'-o')
 plt.title('Erreur de calcul')
 plt.xlabel('Pas $d_x=d_y$ [m]')
 plt.ylabel('Err [$^o$C]')
-plt.savefig("Img456/Erreur.pdf")
+plt.savefig("Img456/Erreur.png")
 plt.close()
 
 plt.figure(6)
@@ -222,7 +222,7 @@ plt.title('Temps de calcul(initialisation et inversion)')
 plt.xlabel('Pas $d_x=d_y$ [m]')
 plt.ylabel('t [s]')
 plt.legend(['$t_{initialisation}$','$t_{inversion}$'])
-plt.savefig("Img456/Temps.pdf")
+plt.savefig("Img456/Temps.png")
 plt.close()
 
 print(f"Les différentes valeurs de Tm selon le pas sont: {Tm_ar[1::]}")

@@ -94,16 +94,10 @@ for fact in fact_ar:
         for j in np.arange(1,Nx+1,1):
             # remplir la ligne pl de la matrice M
             pl=(i-1)*Nx+j;
+            x = (j-1)*d;
+            y = (i-1)*d;
             
-            if (((i>1) and (i<Ny)) and ((j>1) and (j<Nx)) and ((j*d!=Lm) or (j*d!=(Lx-Lm)))):
-                # noeud qui est strictement à l'intérieur de la cellule de simulation
-                pc=pl;M[pl-1,pc-1]=-4; # contribution de noeud (i,j)
-                pc=(i-1)*Nx+j-1;M[pl-1,pc-1]=1; # contribution de noeud (i,j-1)
-                pc=(i-1)*Nx+j+1;M[pl-1,pc-1]=1; # contribution de noeud (i,j+1)
-                pc=(i-2)*Nx+j;M[pl-1,pc-1]=1; # contribution de noeud (i-1,j)
-                pc=(i)*Nx+j;M[pl-1,pc-1]=1; # contribution de noeud (i+1,j)
-                b[pl-1]=-d**2*S[i-1,j-1]/k[i-1,j-1];
-            elif (i==1):
+            if (i==1):
                 # noeud sur le plafond y=0
                 pc=pl;M[pl-1,pc-1]=1; # contribution de noeud (1,j)
                 b[pl-1]=Tp;
@@ -111,14 +105,6 @@ for fact in fact_ar:
                 # noeud sur le plancher y=Ly
                 pc=pl;M[pl-1,pc-1]=1; # contribution de noeud (Ny,j)
                 b[pl-1]=Tp;
-            elif ((j*d==Lm) or (j*d==(Lx-Lm))):
-                #frontière entre mur et intérieures
-                pc=pl; M[pl-1,pc-1]=3*(k[Ly/2, 1]-k[Ly/2, Lx/2])
-                pc=pl-1; M[pl-1,pc-1]=4*k[Ly/2, 1]
-                pc=pl+1; M[pl-1,pc-1]=-4*k[Ly/2, Lx/2]
-                pc=pl-2; M[pl-1,pc-1]=1*k[Ly/2, 1]
-                pc=pl+2; M[pl-1,pc-1]=-1*k[Ly/2, Lx/2]
-                b[pl-1]=0
             elif (j==1):
                 # noeud à la surface externe du mur x=0
                 pc=pl;M[pl-1,pc-1]=3+2*d*h/k[i-1,j-1]; # contribution de noeud (i,1)
@@ -131,8 +117,43 @@ for fact in fact_ar:
                 pc=(i-1)*Nx+j-1;M[pl-1,pc-1]=-4; # contribution de noeud (i,Nx-1)
                 pc=(i-1)*Nx+j-2;M[pl-1,pc-1]=1; # contribution de noeud (i,Nx-2)
                 b[pl-1]=2*d*h*Ta/k[i-1,j-1];
+            elif ((x==Lm or x==Lx-Lm) and (y<=Ly-Lm and y>=Lm)):
+                if x==Lm:
+                    sens = 1
+                else : 
+                    sens = -1
+                pc=pl;M[pl-1,pc-1]=3*(km+ka)
+                pc=pl+sens;M[pl-1,pc-1]=-4*ka
+                pc=pl-sens;M[pl-1,pc-1]=-4*km
+                pc=pl+2*sens;M[pl-1,pc-1]=ka
+                pc=pl-2*sens;M[pl-1,pc-1]=km
+                b[pl-1]=0
+
+
+            elif ((y==Lm or y==Ly-Lm) and (x<=Lx-Lm and x>=Lm)):
+                if y==Lm:
+                    sens = 1
+                else : 
+                    sens = -1
+                pc=pl;M[pl-1,pc-1]=3*(km+ka)
+                pc=(i-1+sens)*Nx+j;M[pl-1,pc-1]=-4*ka
+                pc=(i-1-sens)*Nx+j;M[pl-1,pc-1]=-4*km
+                pc=(i-1+2*sens)*Nx+j;M[pl-1,pc-1]=ka
+                pc=(i-1-2*sens)*Nx+j;M[pl-1,pc-1]=km
+                b[pl-1]=0
+
+                
             else:
-                print('Erreur dans la définition de la matrice de coefficients');
+                # noeud qui est strictement à l'intérieur de la cellule de simulation
+                pc=pl;M[pl-1,pc-1]=-4; # contribution de noeud (i,j)
+                pc=(i-1)*Nx+j-1;M[pl-1,pc-1]=1; # contribution de noeud (i,j-1)
+                pc=(i-1)*Nx+j+1;M[pl-1,pc-1]=1; # contribution de noeud (i,j+1)
+                pc=(i-2)*Nx+j;M[pl-1,pc-1]=1; # contribution de noeud (i-1,j)
+                pc=(i)*Nx+j;M[pl-1,pc-1]=1; # contribution de noeud (i+1,j)
+                b[pl-1]=-d**2*S[i-1,j-1]/k[i-1,j-1];
+
+
+
 
     toc=time.time_ns();
     tini_ar[ci]=(toc-tic)/1.0e9; #temps en [s]  
@@ -149,20 +170,20 @@ for fact in fact_ar:
     
     Tm_ar[ci]=Tr[int(np.rint(Ly/d/2+1))-1,int(np.rint(Lx/d/2+1))-1]; # température au milieu du domaine de calcul
 
-plt.figure(1)
-plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,S);
-plt.colorbar(mappable=None, cax=None, ax=None);
-plt.title('S(x,y) [W/$m^3$]')
-plt.xlabel('x [m]')    
-plt.ylabel('y [m]')
+#plt.figure(1)
+#plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,S);
+#plt.colorbar(mappable=None, cax=None, ax=None);
+#plt.title('S(x,y) [W/$m^3$]')
+#plt.xlabel('x [m]')    
+#plt.ylabel('y [m]')
 
 
-plt.figure(2)
-plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,k);
-plt.colorbar(mappable=None, cax=None, ax=None);
-plt.title('k(x,y) [W/($m^2\cdot$K)]')
-plt.xlabel('x [m]')    
-plt.ylabel('y [m]')
+#plt.figure(2)
+#plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,k);
+#plt.colorbar(mappable=None, cax=None, ax=None);
+#plt.title('k(x,y) [W/($m^2\cdot$K)]')
+#plt.xlabel('x [m]')    
+#plt.ylabel('y [m]')
 
 plt.figure(3)
 #plt.title(f'T(x,y) [$^o$C] — pas de discrétisation d = {d:.3f} m')
@@ -171,13 +192,17 @@ plt.colorbar(mappable=None, cax=None, ax=None)
 plt.xlabel('x [m]', fontsize=16)
 plt.ylabel('y [m]', fontsize=16)
 plt.tick_params(axis='both', which='major', labelsize=14)
-plt.show()
+plt.savefig("Img123/T.png")
+plt.close()
+
 
 plt.figure(4)
 plt.loglog(d_ar[::-1],mem_ar[::-1]/1024.0**3,'-o')
 #plt.title('Exigences de mémoire')
 plt.xlabel('Pas $d_x=d_y$ [m]', fontsize=16)
 plt.ylabel('Mémoire [Gb]', fontsize=16)
+plt.savefig("Img123/Ram")
+plt.close()
 
 
 plt.figure(5)
@@ -187,7 +212,8 @@ plt.loglog(d_Err_ar[::-1],Err_ar[::-1],'-o')
 #plt.title('Erreur de calcul')
 plt.xlabel('Pas $d_x=d_y$ [m]', fontsize=16)
 plt.ylabel('Err [$^o$C]', fontsize=16)
-plt.show()
+plt.savefig("Img123/Erreur.png")
+plt.close()
 
 plt.figure(6)
 plt.loglog(d_ar[::-1],tini_ar[::-1],'-bo',d_ar[::-1],tinv_ar[::-1],'-r*')
@@ -195,6 +221,8 @@ plt.title('Temps de calcul(initialisation et inversion)')
 plt.xlabel('Pas $d_x=d_y$ [m]')
 plt.ylabel('t [s]')
 plt.legend(['$t_{initialisation}$','$t_{inversion}$'])
+plt.savefig("Img123/Temps.png")
+plt.close()
 
 p = np.polyfit(np.log(d_Err_ar[::-1]), Err_ar[::-1], 1)
 P_err = p[0]
