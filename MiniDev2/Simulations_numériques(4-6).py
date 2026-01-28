@@ -200,9 +200,9 @@ plt.close()
 
 plt.figure(4)
 plt.loglog(d_ar[::-1],mem_ar[::-1]/1024.0**3,'-o')
-plt.title('Exigences de mémoire')
-plt.xlabel('Pas $d_x=d_y$ [m]')
-plt.ylabel('Mémoire [Gb]')
+# plt.title('Exigences de mémoire')
+plt.xlabel('Pas $d_x=d_y$ [m]', frontsize = 16)
+plt.ylabel('Mémoire [Gb]', frontsize = 16)
 plt.savefig("Img456/Ram.pdf")
 plt.close()
 
@@ -224,3 +224,9 @@ plt.ylabel('t [s]')
 plt.legend(['$t_{initialisation}$','$t_{inversion}$'])
 plt.savefig("Img456/Temps.pdf")
 plt.close()
+
+p = np.polyfit(np.log(d_ar[::-1]), np.log(mem_ar[::-1]), 1)
+exp_mem = p[0]
+Coeff_mem= np.exp(p[1])
+print(f"Amem est {Coeff_mem}")
+print(f"Pmem est {exp_mem}")
