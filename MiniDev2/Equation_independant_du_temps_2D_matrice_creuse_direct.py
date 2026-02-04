@@ -33,7 +33,7 @@ h=1; #W/(m^2*K); Coefficient de transfert thermique sur les surfaces extérieure
 # Paramètres de l'air qui remplit l'appartement
 ka=0.024;
 
-fact_ar = np.array([2.0, 1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125], dtype=np.double); # Matrice pleine
+fact_ar = np.array([0.0675], dtype=np.double); # Matrice pleine
 d_ar=np.zeros(fact_ar.size,dtype=np.double);
 tini_ar=np.zeros(fact_ar.size,dtype=np.double);
 tinv_ar=np.zeros(fact_ar.size,dtype=np.double);
@@ -124,6 +124,31 @@ for fact in fact_ar:
                 pc=(i-1)*Nx+j-1;M[pl-1,pc-1]=-4; # contribution de noeud (i,Nx-1)
                 pc=(i-1)*Nx+j-2;M[pl-1,pc-1]=1; # contribution de noeud (i,Nx-2)
                 b[pl-1]=2*d*h*Ta/k[i-1,j-1];
+            
+            elif ((i==Lm or i==Lx-Lm) and (j<=Ly-Lm and j>=Lm)):
+                if i==Lm:
+                    sens = 1
+                else : 
+                    sens = -1
+                pc=pl;M[pl-1,pc-1]=3*(km+ka)
+                pc=pl+sens;M[pl-1,pc-1]=-4*ka
+                pc=pl-sens;M[pl-1,pc-1]=-4*km
+                pc=pl+2*sens;M[pl-1,pc-1]=ka
+                pc=pl-2*sens;M[pl-1,pc-1]=km
+                b[pl-1]=0
+
+
+            elif ((j==Lm or j==Ly-Lm) and (i<=Lx-Lm and i>=Lm)):
+                if j==Lm:
+                    sens = 1
+                else : 
+                    sens = -1
+                pc=pl;M[pl-1,pc-1]=3*(km+ka)
+                pc=(i-1+sens)*Nx+j;M[pl-1,pc-1]=-4*ka
+                pc=(i-1-sens)*Nx+j;M[pl-1,pc-1]=-4*km
+                pc=(i-1+2*sens)*Nx+j;M[pl-1,pc-1]=ka
+                pc=(i-1-2*sens)*Nx+j;M[pl-1,pc-1]=km
+                b[pl-1]=0
             else:
                 print('Erreur dans la définition de la matrice de coefficients');
 
@@ -132,62 +157,65 @@ for fact in fact_ar:
     
     tic=time.time_ns();
     lu=sp.sparse.linalg.splu(sp.sparse.lil_matrix.tocsc(M));  
-    T=lu.solve(b);
-    #T=sp.sparse.linalg.spsolve(sp.sparse.lil_matrix.tocsc(M), b); #Matrice creuse
+    # T=lu.solve(b);
+    T=sp.sparse.linalg.spsolve(sp.sparse.lil_matrix.tocsc(M), b); #Matrice creuse
     toc=time.time_ns();
     tinv_ar[ci]=(toc-tic)/1.0e9; #temps en [s]  
     
-    mem_ar[ci]=mem_ar[ci]=3*8*(lu.L.getnnz()+lu.U.getnnz());
+    mem_ar[ci]=mem_ar[ci]=3*8*(lu.L.nnz+lu.U.nnz);
     print('le nombre d''éléments non nuls dans les matrices L+U:',round(mem_ar[ci]/8));
     
     Tr=np.reshape(T,(Ny,Nx),order='C');
     
     Tm_ar[ci]=Tr[int(np.rint(Ly/d/2+1))-1,int(np.rint(Lx/d/2+1))-1]; # température au milieu du domaine de calcul
 
-plt.figure(1)
-plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,S);
-plt.colorbar(mappable=None, cax=None, ax=None);
-plt.title('S(x,y) [W/$m^3$]')
-plt.xlabel('x [m]')    
-plt.ylabel('y [m]')
-plt.show()
+# plt.figure(1)
+# plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,S);
+# plt.colorbar(mappable=None, cax=None, ax=None);
+# plt.title('S(x,y) [W/$m^3$]')
+# plt.xlabel('x [m]')    
+# plt.ylabel('y [m]')
+# plt.show()
 
-plt.figure(2)
-plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,k);
-plt.colorbar(mappable=None, cax=None, ax=None);
-plt.title('k(x,y) [W/($m^2\cdot$K)]')
-plt.xlabel('x [m]')    
-plt.ylabel('y [m]')
-plt.show()
+# plt.figure(2)
+# plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,k);
+# plt.colorbar(mappable=None, cax=None, ax=None);
+# plt.title('k(x,y) [W/($m^2\cdot$K)]')
+# plt.xlabel('x [m]')    
+# plt.ylabel('y [m]')
+# plt.show()
 
-plt.figure(3)
-plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,Tr);
-plt.colorbar(mappable=None, cax=None, ax=None);
-plt.title('T(x,y) [$^o$C]')
-plt.xlabel('x [m]')    
-plt.ylabel('y [m]')
-plt.show()
+# plt.figure(3)
+# plt.pcolor(np.arange(0,Nx,1)*d,np.arange(0,Ny,1)*d,Tr);
+# plt.colorbar(mappable=None, cax=None, ax=None);
+# plt.title('T(x,y) [$^o$C]')
+# plt.xlabel('x [m]')    
+# plt.ylabel('y [m]')
+# plt.show()
 
-plt.figure(4)
-plt.loglog(d_ar[::-1],mem_ar[::-1]/1024.0**3,'-o')
-plt.title('Exigences de mémoire')
-plt.xlabel('Pas $d_x=d_y$ [m]')
-plt.ylabel('Mémoire [Gb]')
-plt.show()
+# plt.figure(4)
+# plt.loglog(d_ar[::-1],mem_ar[::-1]/1024.0**3,'-o')
+# plt.title('Exigences de mémoire')
+# plt.xlabel('Pas $d_x=d_y$ [m]')
+# plt.ylabel('Mémoire [Gb]')
+# plt.show()
 
-plt.figure(5)
-Err_ar=abs(Tm_ar[:-1:]-Tm_ar[1::]);
-d_Err_ar=d_ar[1::]; # Definiton d'erreur Err(delta)=|Tm(2*delta)-Tm(delta)|
-plt.loglog(d_Err_ar[::-1],Err_ar[::-1],'-o')
-plt.title('Erreur de calcul')
-plt.xlabel('Pas $d_x=d_y$ [m]')
-plt.ylabel('Err [$^o$C]')
-plt.show()
+# plt.figure(5)
+# Err_ar=abs(Tm_ar[:-1:]-Tm_ar[1::]);
+# d_Err_ar=d_ar[1::]; # Definiton d'erreur Err(delta)=|Tm(2*delta)-Tm(delta)|
+# plt.loglog(d_Err_ar[::-1],Err_ar[::-1],'-o')
+# plt.title('Erreur de calcul')
+# plt.xlabel('Pas $d_x=d_y$ [m]')
+# plt.ylabel('Err [$^o$C]')
+# plt.show()
 
-plt.figure(6)
-plt.loglog(d_ar[::-1],tini_ar[::-1],'-bo',d_ar[::-1],tinv_ar[::-1],'-r*')
-plt.title('Temps de calcul(initialisation et inversion)')
-plt.xlabel('Pas $d_x=d_y$ [m]')
-plt.ylabel('t [s]')
-plt.legend(['$t_{initialisation}$','$t_{inversion}$'])
-plt.show()
+# plt.figure(6)
+# plt.loglog(d_ar[::-1],tini_ar[::-1],'-bo',d_ar[::-1],tinv_ar[::-1],'-r*')
+# plt.title('Temps de calcul(initialisation et inversion)')
+# plt.xlabel('Pas $d_x=d_y$ [m]')
+# plt.ylabel('t [s]')
+# plt.legend(['$t_{initialisation}$','$t_{inversion}$'])
+# plt.show()
+
+print(np.average(T))
+# print(Tm_ar[ci]-22.23757829700937)
