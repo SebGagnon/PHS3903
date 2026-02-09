@@ -54,7 +54,7 @@ for d in range(0, ND):
             
             
             Vind[k] = Nint / Ntot * Vtot # Volume calculé pour cet essai
-        ecart_type = np.std(Vind, ddof=1)
+        ecart_type = np.abs( - Vth)
         incertitude_relative = ecart_type * 100 /(Ness**0.5 * np.mean(Vind))
         Vlist[d][n+1] = [np.mean(Vind), incertitude_relative] # Volume moyenné sur l'ensemble des essais
 header = []
