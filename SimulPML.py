@@ -1,16 +1,14 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# --------------------------------------------------
-# Setup PML (vectorized — faster and cleaner)
-# --------------------------------------------------
+
 def setup_pml(n, pml_width=50, sigma_max=0.5):
     sigmax = np.zeros((n, n))
     sigmay = np.zeros((n, n))
 
     idx = np.arange(n)
 
-    # Distance from boundaries
+    
     left = np.clip(pml_width - idx, 0, pml_width)
     right = np.clip(pml_width - (n - 1 - idx), 0, pml_width)
 
@@ -22,14 +20,12 @@ def setup_pml(n, pml_width=50, sigma_max=0.5):
     return sigmax, sigmay
 
 
-# --------------------------------------------------
-# Initialize domain
-# --------------------------------------------------
+
 n = 256
-c = 1.0
+c = 2.0
 tmax = 1500
 
-xmin, xmax = -100, 100
+xmin, xmax = -50, 50
 x1d = np.linspace(xmin, xmax, n)
 dx = x1d[1] - x1d[0]
 
@@ -37,9 +33,6 @@ x, y = np.meshgrid(x1d, x1d)
 
 phi = np.exp(-(x**2 + y**2)/2) / (2*np.pi)
 
-# --------------------------------------------------
-# PML and simulation variables
-# --------------------------------------------------
 sigmax, sigmay = setup_pml(n)
 
 dt = 0.25 * dx / c
@@ -52,9 +45,6 @@ u_now = np.zeros((n, n))
 vx = np.zeros((n, n))
 vy = np.zeros((n, n))
 
-# --------------------------------------------------
-# Visualization setup
-# --------------------------------------------------
 plt.figure(figsize=(7, 6))
 
 im = plt.imshow(
@@ -67,20 +57,18 @@ im = plt.imshow(
     aspect='equal'
 )
 
-plt.colorbar(label="Wave Amplitude")
+plt.colorbar(label="Amplitude")
 plt.xlim(xmin, xmax)
 plt.ylim(xmin, xmax)
 plt.xlabel("x")
 plt.ylabel("y")
-plt.title("2D Wave with PML")
+
 
 plt.tight_layout()
 plt.ion()
 plt.show()
 
-# --------------------------------------------------
-# Time stepping loop
-# --------------------------------------------------
+
 for t in range(tmax):
 
     dudx, dudy = np.gradient(u_now, dx)
@@ -105,10 +93,10 @@ for t in range(tmax):
         + psi
     )
 
-    # Update visualization
+    
     if t % 10 == 0:
         im.set_data(u_now)
-        plt.title(f"2D Wave with PML — t = {t}")
+        plt.title(f"t = {t}")
         plt.draw()
         plt.pause(0.001)
 
