@@ -1,0 +1,358 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "HQqQj6YSIKXr"
+      },
+      "source": [
+        "# Mini devoir 6 : Itérations QR et valeurs propres\n",
+        "\n",
+        "La décomposition QR est une factorisation utile d'une matrice, largement utilisée en algèbre linéaire numérique. Elle consiste à écrire une matrice $A\\in\\mathbb{R}^{n\\times n}$ sous la forme :\n",
+        "\n",
+        "$$A = QR,$$\n",
+        "\n",
+        "où les colonnes de $Q$ sont orthonormales et $R$ est triangulaire supérieure. Dans ce devoir, nous utiliserons la décomposition QR pour trouver les états propres et les niveaux d'énergie de l'oscillateur quantique anharmonique :\n",
+        "\n",
+        "$$H = \\frac{p^2}{2m}+\\frac{1}{2}m\\omega^2x^2 + \\sum_{k=3}^N c_kx^k$$\n",
+        "\n",
+        "En général, ce système ne possède pas de solution sous forme fermée ; il doit donc être résolu numériquement.\n"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "CnTUdjZAOAcR"
+      },
+      "source": [
+        "# 1. Mise en place du problème [6 points]\n",
+        "\n",
+        "**Prenez le Hamiltonien du système et effectuez un changement de variables en $x$ afin que l'équation de Schrödinger indépendante du temps puisse s'écrire :**\n",
+        "\n",
+        "$$-\\frac{d^2\\psi}{dx^2} + \\left(x^2+\\sum_{k=3}^Nc_kx^k\\right)\\psi=E\\psi$$\n",
+        "\n",
+        "(Les quantités $x$, $c$ et $E$ sont les variables que vous redéfinirez.)\n",
+        "\n",
+        "L'équation de Schrödinger est:\n",
+        "\n",
+        "$$H\\psi = \\epsilon\\psi$$\n",
+        "où $\\epsilon$ est l'énergie.\n",
+        "L'opérateur quantité de mouvement (p) vaut $-iℏ\\frac{d}{dX}$ où X est la position.\n",
+        "\n",
+        "En remplaçant H dans l'équation de Schrodinger, on a:\n",
+        "\n",
+        "\n",
+        "$$\\left(\\frac{-ℏ^2}{2m}\\frac{d^2}{dX^2} + \\frac{1}{2}m\\omega^2X^2 + \\sum_{k=3}^Na_kX^k\\right)\\psi=\\epsilon\\psi$$\n",
+        "\n",
+        "La longueur caractéristique de l’oscillateur harmonique est \n",
+        "$$ l = \\sqrt{\\frac{\\hbar}{m\\omega}}$$\n",
+        "Si on fait le changement de variable $x =\\frac{X}{l}$, on trouve\n",
+        "\n",
+        "$$\\frac{-\\hbar\\omega}{2}\\frac{d^2\\psi}{dx^2} + \\left(\\frac{\\hbar \\omega}{2}x^2 + \\sum_{k=3}^Na_k\\left(\\frac{\\hbar}{m\\omega}\\right)^{k/2}x^k\\right)\\psi=\\epsilon\\psi$$\n",
+        "\n",
+        "Si on pose que $E = \\frac{2\\epsilon}{\\hbar\\omega}$ et qu'on fait le changement de variable suivant, $ a_k\\frac{2}{\\hbar\\omega}\\left(\\frac{\\hbar}{m\\omega}\\right)^{k/2} = c_k$\n",
+        "\n",
+        "$$-\\frac{d^2\\psi}{dx^2} + \\left(x^2+\\sum_{k=3}^Nc_kx^k\\right)\\psi=E\\psi$$"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 1,
+      "metadata": {
+        "id": "iK0hSltkC18P"
+      },
+      "outputs": [],
+      "source": [
+        "import numpy as np\n",
+        "from scipy.sparse import diags\n",
+        "from numpy.linalg import norm, lstsq, cond\n",
+        "import matplotlib.pyplot as plt\n",
+        "\n",
+        "# construire la systeme\n",
+        "def systeme(n, cs):\n",
+        "    # maillage\n",
+        "    xs = np.linspace(-1, 1, n)\n",
+        "    dx = xs[1] - xs[0]\n",
+        "\n",
+        "    # energy cinetique\n",
+        "    diag_1 = -2 * np.ones(n) / dx\n",
+        "    diag_2 = 1 * np.ones(n-1) / dx\n",
+        "    D2 = diags([diag_2, diag_1, diag_2], offsets=[-1, 0, 1], format='csr')\n",
+        "\n",
+        "    # energie potentiel\n",
+        "    def V(x):\n",
+        "        result = x**2\n",
+        "        for (k, c) in enumerate(cs):\n",
+        "            result += c * x**(k+3)\n",
+        "        return result\n",
+        "    V = diags([[V(x) for x in xs]], offsets=[0], format='csr')\n",
+        "\n",
+        "    H = -D2 + V\n",
+        "    return xs, H.toarray()"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "K6qgpMVzDc9i"
+      },
+      "source": [
+        "# 2. Décomposition QR en utilisant des rotations de Givens\n",
+        "\n",
+        "Afin d'effectuer concrètement la décomposition QR, nous commencerons par prendre $Q=I$ et $R = H$. Nous effectuerons ensuite itérativement des rotations sur $Q$ et $R$ jusqu'à ce que $R$ soit triangulaire. Par exemple, supposons que $R$ soit une matrice $3\\times3$ :\n",
+        "\n",
+        "$$\\begin{bmatrix}*&*&*\\\\a&b&*\\\\c&d&*\\end{bmatrix}$$\n",
+        "\n",
+        "Dans ce cas, nous devons d'abord effectuer une rotation qui ammène $c$ à zéro ; cela s'appelle une rotation de Givens. Une fois cette rotation $G_0$ identifiée, on insère $G_0^TG_0$ de sorte que :\n",
+        "\n",
+        "$$\\begin{align}H &= H\\\\ &= IG_0^TG_0H\\end{align}$$\n",
+        "\n",
+        "Cela signifie que nous avons défini la première itération QR comme $Q_0 = G_0^T$, $R_0 = G_0H$. En poursuivant les itérations pour éliminer davantage d'éléments de $R$, nous insérons davantage de termes $G^TG$. On obtient alors :\n",
+        "\n",
+        "$$H= G_0^TG_1^TG_2^T\\cdots G_2G_1G_0H$$\n",
+        "\n",
+        "En pratique, nous ne formons pas explicitement ces matrices, mais plutôt nous modifions la matrice.\n",
+        "\n",
+        "**Modifiez la section « TODO » pour implémenter les rotations dans la décomposition QR en utilisant le cos et le sin obtenus à partir de la fonction `rotation`.**\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "OaxmO17ZDtEg"
+      },
+      "outputs": [
+        {
+          "name": "stdout",
+          "output_type": "stream",
+          "text": [
+            "[[ 0.12309149  0.90453403 -0.40824829]\n",
+            " [ 0.49236596  0.30151134  0.81649658]\n",
+            " [ 0.86164044 -0.30151134 -0.40824829]]\n",
+            "[[8.12403840e+00 9.60113630e+00 1.10782342e+01]\n",
+            " [2.63828304e-16 9.04534034e-01 1.80906807e+00]\n",
+            " [3.57225212e-16 5.55111512e-17 0.00000000e+00]]\n",
+            "[[1. 2. 3.]\n",
+            " [4. 5. 6.]\n",
+            " [7. 8. 9.]]\n",
+            "[[ 1.00000000e+00 -2.44930592e-17 -3.30781356e-17]\n",
+            " [-2.44930592e-17  1.00000000e+00 -6.06602824e-17]\n",
+            " [-3.30781356e-17 -6.06602824e-17  1.00000000e+00]]\n"
+          ]
+        }
+      ],
+      "source": [
+        "# rotation Givens\n",
+        "def rotation(a, b):\n",
+        "    return (a, -b) / np.sqrt(a**2 + b**2)\n",
+        "\n",
+        "# decomposition QR\n",
+        "def qr(A):\n",
+        "    m, n = A.shape\n",
+        "    R = A.copy()\n",
+        "    Q = np.identity(m)\n",
+        "    for i in range(0, n - 1):\n",
+        "        for j in range(i + 1, m):\n",
+        "            cos, sin = rotation(R[i, i], R[j, i])\n",
+        "            # TODO 2. utiliser les rotation de Givens pour obtenir Q et R\n",
+        "            if R[j, i] != 0:\n",
+        "                R[i], R[j] = R[i], R[j]\n",
+        "                Q[:, i], Q[:, j] = Q[:, i], Q[:, j]\n",
+        "\n",
+        "                 # ---- appliquer rotation sur R (lignes i et j) ----\n",
+        "                Ri = R[i, :].copy()\n",
+        "                Rj = R[j, :].copy()\n",
+        "\n",
+        "                R[i, :] = cos * Ri - sin * Rj\n",
+        "                R[j, :] = sin * Ri + cos * Rj\n",
+        "\n",
+        "                # ---- appliquer rotation sur Q (colonnes i et j) ----\n",
+        "                Qi = Q[:, i].copy()\n",
+        "                Qj = Q[:, j].copy()\n",
+        "\n",
+        "                Q[:, i] = cos * Qi - sin * Qj\n",
+        "                Q[:, j] = sin * Qi + cos * Qj\n",
+        "\n",
+        "            #############################################################\n",
+        "    return Q, R\n",
+        "\n",
+        "\n",
+        "# --------- TEST ---------\n",
+        "#A = np.array([[1, 2, 3],\n",
+        "#              [4, 5, 6],\n",
+        "#              [7, 8, 9]], dtype=float)\n",
+        "\n",
+        "#Q, R = qr(A)\n",
+        "\n",
+        "#print(Q)\n",
+        "#print(R)\n",
+        "#print(Q @ R)\n",
+        "#print(Q @ np.transpose(Q))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "pnvDAjDOESnQ"
+      },
+      "source": [
+        "# 3. Taux de convergence de l'*itération* QR [6 points]\n",
+        "\n",
+        "L'*itération* QR est une méthode qui utilise la *décomposition* QR pour trouver les valeurs propres et les vecteurs propres. Pour une matrice $H$, on commence avec $H_0 = Q_0R_0$ :\n",
+        "\n",
+        "1. Créer $H_{k}=R_{k-1}Q_{k-1}$ (N.B. que c'est RQ et pas QR)\n",
+        "2. Former la décomposition $H_{k+1} = Q_kR_k$\n",
+        "3. Revenir à l'étape 1.\n",
+        "\n",
+        "Ce procédé construit :\n",
+        "\n",
+        "$$H_k = Q^T_{k-1}Q^T_{k-2}Q^T_{k-3}\\cdots Q_0HQ_0\\cdots Q_{k-3}Q_{k-2}Q_{k-1}$$\n",
+        "\n",
+        "On peut démontrer que ce produit de matrices $Q$ converge vers les vecteurs propres de $H$. Cela signifie que la diagonale de $H_k$ converge vers les valeurs propres de $H$. Ceci a été implémenté ci-dessous pour l'oscillateur anharmonique avec des conditions de frontière Dirichlet.\n",
+        "\n",
+        "**Tracez la différence par itération des vecteurs propres en fonction de la taille de pas et du nombre de conditionnement. Quels sont les ordres de convergence ?**\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "Piu7dpJIFF7A"
+      },
+      "outputs": [],
+      "source": [
+        "# iteration QR\n",
+        "def eig_qr(A, tol=1e-5):\n",
+        "    Q, R = qr(A)\n",
+        "    vs = Q\n",
+        "    T = np.dot(R, Q)\n",
+        "    l = T[0, 0]\n",
+        "    diff = 1\n",
+        "    i = 0\n",
+        "    while diff > tol:\n",
+        "        i += 1\n",
+        "        Q, R = qr(T)\n",
+        "        vs = np.dot(vs, Q)\n",
+        "        T = np.dot(R, Q)\n",
+        "        diff = abs(l - T[0, 0]) / abs(l)\n",
+        "        l = T[0, 0]\n",
+        "    ls = np.array([T[i, i] for i in range(len(T))])\n",
+        "    return ls, vs, i\n",
+        "\n",
+        "\n",
+        "ns = np.pow(2, range(3, 8))\n",
+        "\n",
+        "#TODO les ordres de convergence\n",
+        "\n",
+        "###############################"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "SxlmOzWeFS-S"
+      },
+      "source": [
+        "# 4. Propagation et décomposition [6 points]\n",
+        "\n",
+        "Jusqu'à présent, nous avons déterminé les modes propres du système. Nous allons maintenant écrire le code permettant de décrire l'évolution temporelle du système. En général, nous n'avons pas besoin de tous les modes pour représenter correctement une fonction d'onde. Cela permet d'effectuer moins d'opérations puisqu'on travaille dans une base plus petite.\n",
+        "\n",
+        "**Modifiez la section « TODO » pour décomposer $\\phi$ sur les modes propres, le faire évoluer dans le temps, puis revenir dans la base originale. Utilisez l'argument `k`, qui détermine combien de modes propres sont utilisés pour la décomposition.**\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": 25,
+      "metadata": {
+        "id": "XowbgE0TFamz"
+      },
+      "outputs": [],
+      "source": [
+        "def propag(ls, vs, phi, t, k=5):\n",
+        "    # TODO 4. decomposer phi et propager en temps\n",
+        "\n",
+        "    return phi\n",
+        "    #############################################\n",
+        "\n",
+        "n = 64\n",
+        "xs, H = systeme(n, [1, 2, 3])\n",
+        "ls, vs, it = eig_qr(H)\n",
+        "\n",
+        "mu = 0.5\n",
+        "sigma = 1e-1\n",
+        "phi = (1/(sigma*np.sqrt(2*np.pi))) * np.exp(-(xs-mu)**2/(2*sigma**2))\n",
+        "phi /= norm(phi)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "VtnPTmYmGJ20"
+      },
+      "source": [
+        "# 5. Créer une animation de la simulation [2 points]\n",
+        "\n",
+        "Ce problème vise davantage une démonstration visuelle qu'une évaluation. Nous allons ici créer un gif de l'évolution temporelle de l'oscillateur anharmonique.\n",
+        "\n",
+        "**Modifiez la section « TODO » pour déterminer le nombre de modes ($K$) nécessaire afin d'approximer $\\phi$ de la partie 4 (précision $\\sqrt{\\varepsilon}$).**\n",
+        "\n",
+        "Vous pouvez également vérifier visuellement comment la qualité de l'approximation change lorsque vous utilisez de moins en moins d'information.\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "D_OHziyQGKLn"
+      },
+      "outputs": [],
+      "source": [
+        "err = np.inf\n",
+        "K = 1\n",
+        "#TODO déterminer K\n",
+        "\n",
+        "##################\n",
+        "\n",
+        "\n",
+        "from matplotlib.animation import FuncAnimation\n",
+        "fig, ax = plt.subplots()\n",
+        "line, = ax.plot(xs, phi)\n",
+        "ax.set_ylim(0.0, 0.2)\n",
+        "\n",
+        "def update(t):\n",
+        "    line.set_ydata(np.abs(propag(ls, vs, phi, t, k=K))**2)\n",
+        "    return line,\n",
+        "\n",
+        "anim = FuncAnimation(fig, update,\n",
+        "                     frames=np.linspace(0, 7, 1000),\n",
+        "                     interval=30,\n",
+        "                     blit=True)\n",
+        "anim.save(\"animation.gif\", writer=\"pillow\", fps=30)"
+      ]
+    }
+  ],
+  "metadata": {
+    "colab": {
+      "provenance": []
+    },
+    "kernelspec": {
+      "display_name": "Python 3",
+      "name": "python3"
+    },
+    "language_info": {
+      "codemirror_mode": {
+        "name": "ipython",
+        "version": 3
+      },
+      "file_extension": ".py",
+      "mimetype": "text/x-python",
+      "name": "python",
+      "nbconvert_exporter": "python",
+      "pygments_lexer": "ipython3",
+      "version": "3.11.9"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 0
+}
