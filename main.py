@@ -208,9 +208,9 @@ if __name__ == "__main__":
         nx=200, ny=200,
         dx=1.0, dy=1.0,
         c=1.5,
-        gamma0=0.0015,
-        sponge_width=50,
-        sponge_strength=0.20,
+        gamma0=0.0025,
+        sponge_width=30,
+        sponge_strength=0.30,
         steps=1000,
 
         # sources
