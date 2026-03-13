@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 ## Constantes ##
 L = 100 # Longueur d'un côté [m]
 t = 100 # temps de simulation [s]
-nx= 5  # nombre de points en x
-ny= 5  # nombre de points en y
+nx= 1000  # nombre de points en x
+ny= 1000  # nombre de points en y
 h= L/nx # distance entre les points spatiaux [m]
 dt=1  # distance entre les points temporaux [s]
 nt=t/dt # nombre de points temporaux
@@ -48,7 +48,7 @@ def grille_vers_vecteur(grille): # prend
 def vecteur_vers_grille(vecteur, nx, ny):
     return np.flipud(vecteur.reshape(nx, ny))
 
-def pulse_gaussien_module(nx, ny, x0=None, y0=None, sigma=5, w=1, A0=1):
+def pulse_gaussien_module(nx, ny, x0=None, y0=None, sigma=50, w=0.05, A0=1):
 
     if x0 is None:
         x0 = nx // 2
@@ -63,5 +63,6 @@ def pulse_gaussien_module(nx, ny, x0=None, y0=None, sigma=5, w=1, A0=1):
 
     return pulse
 
-pulse = pulse_gaussien_module(nx,ny)
-print(pulse)
+plt.imshow(pulse_gaussien_module(nx,ny),cmap="seismic")
+plt.colorbar()
+plt.show()
