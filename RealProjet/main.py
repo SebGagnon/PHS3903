@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 ## Constantes ##
 L = 100 # Longueur d'un côté [m]
 t = 100 # temps de simulation [s]
-nx=10  # nombre de points en x
-ny=10  # nombre de points en y
+nx= 10  # nombre de points en x
+ny= 10  # nombre de points en y
 h= L/nx # distance entre les points spatiaux [m]
 dt=1  # distance entre les points temporaux [s]
 nt=t/dt # nombre de points temporaux
@@ -31,13 +31,15 @@ u = np.zeros((nx,ny), dtype=np.float64).flatten()
 u_next = np.zeros((nx,ny), dtype=np.float64).flatten()
 A = np.zeros((nx,ny), dtype=np.float64)
 
-def PML(nx,ny,epaisseur,force,puissance,gamma,frequence):
+def PML(nx,ny,epaisseur,puissance,gamma):
 
-    PML = gamma[frequence]*np.ones((nx,ny), dtype=np.float64)
-    
-    ligne, col = np.indices(PML.shape)
+    grille = np.ones((nx,ny))
+    lignes, cols = np.indices((nx,ny))
+    dist = np.minimum.reduce([lignes, cols, nx - 1 - lignes, ny - 1 - cols]) #matrice des distances par rapport aux bords
+    mask = dist < epaisseur # selectionne les elements du PML selon l'épaisseur
+    grille[mask] = (epaisseur - dist[mask]) #modifie les elements de la grille selon leur distance par rapport au edge
+    grille = gamma*grille**puissance #construction finale de la grille des gammas
 
-    Grille[ligne < epaisseur]
+    return grille
 
-    return PML
-
+print(PML(nx,ny,3,1,0.025))
