@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 ## Constantes ##
 L = 100 # Longueur d'un côté [m]
 t = 100 # temps de simulation [s]
-nx= 10  # nombre de points en x
-ny= 10  # nombre de points en y
+nx= 5  # nombre de points en x
+ny= 5  # nombre de points en y
 h= L/nx # distance entre les points spatiaux [m]
 dt=1  # distance entre les points temporaux [s]
 nt=t/dt # nombre de points temporaux
@@ -42,4 +42,11 @@ def PML(nx,ny,epaisseur,puissance,gamma):
 
     return grille
 
-print(PML(nx,ny,3,1,0.025))
+def grille_vers_vecteur(grille):
+    return np.flipud(grille).flatten()
+def vecteur_vers_grille(vecteur, nx, ny):
+    return np.flipud(vecteur.reshape(nx, ny))
+
+A = PML(nx,ny,3,1,0.005)
+A = grille_vers_vecteur(A)
+print(vecteur_vers_grille(A, nx, ny))
