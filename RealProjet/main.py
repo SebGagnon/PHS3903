@@ -42,11 +42,26 @@ def PML(nx,ny,epaisseur,puissance,gamma):
 
     return grille
 
-def grille_vers_vecteur(grille):
+def grille_vers_vecteur(grille): # prend 
     return np.flipud(grille).flatten()
+
 def vecteur_vers_grille(vecteur, nx, ny):
     return np.flipud(vecteur.reshape(nx, ny))
 
-A = PML(nx,ny,3,1,0.005)
-A = grille_vers_vecteur(A)
-print(vecteur_vers_grille(A, nx, ny))
+def pulse_gaussien_module(nx, ny, x0=None, y0=None, sigma=5, w=1, A0=1):
+
+    if x0 is None:
+        x0 = nx // 2
+    if y0 is None:
+        y0 = ny // 2
+
+    x, y = np.meshgrid(np.arange(nx), np.arange(ny), indexing='ij')
+
+    r = np.sqrt((x - x0)**2 + (y - y0)**2)
+
+    pulse = A0 * np.exp(-(r**2)/(2*sigma**2)) * np.cos(w*r)
+
+    return pulse
+
+pulse = pulse_gaussien_module(nx,ny)
+print(pulse)
