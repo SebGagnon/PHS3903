@@ -187,9 +187,9 @@ def solve_damped_wave_2d(
         plt.scatter(ys, xs, s=1, c="k", alpha=0.35, label="Obstacle rigide")
 
     # marqueurs capteurs : imshow(u) => (x,y) s'affiche en (col=y, row=x)
-    plt.plot(cy1, cx1, 'ko', markersize=6, label="Capteur 1")
-    plt.plot(cy2, cx2, 'go', markersize=6, label="Capteur 2")
-    plt.plot(cy3, cx3, 'ro', markersize=6, label="Capteur 3")
+    plt.plot(cy1, cx1, 'ro', markersize=6, label="Capteur 1")
+    plt.plot(cy2, cx2, 'bo', markersize=6, label="Capteur 2")
+    plt.plot(cy3, cx3, 'go', markersize=6, label="Capteur 3")
     plt.legend(loc="upper right")
 
     plt.title("p(x,y,t) — onde 2D amortie | 1 source + obstacle rigide")
@@ -258,9 +258,9 @@ def solve_damped_wave_2d(
 
     # Graphe capteurs après la simulation
     plt.figure(figsize=(8, 4))
-    plt.plot(t_hist, p1_hist, label=f"Capteur 1 ({cx1},{cy1})", lw=0.7)
-    plt.plot(t_hist, p2_hist, label=f"Capteur 2 ({cx2},{cy2})", lw=0.7)
-    plt.plot(t_hist, p3_hist, label=f"Capteur 3 ({cx3},{cy3})", lw=0.7)
+    plt.plot(t_hist, p1_hist,'r', label=f"Capteur 1 ({cx1},{cy1})", lw=0.7)
+    plt.plot(t_hist, p2_hist, 'b', label=f"Capteur 2 ({cx2},{cy2})", lw=0.7)
+    plt.plot(t_hist, p3_hist, 'g', label=f"Capteur 3 ({cx3},{cy3})", lw=0.7)
     plt.xlabel("Temps (s)")
     plt.ylabel("Pression p")
     plt.title("Pression mesurée aux capteurs vs temps")
@@ -281,7 +281,9 @@ if __name__ == "__main__":
 
     # Pulses à différentes positions (UNE seule source logique)
     pulses = [
-        {"pos": (80, 60),   "t0": 1.0,   "sigma": 2, "amp": 5.0},
+        {"pos": (95, 95),   "t0": 5.0,   "sigma": 2, "amp": 5.0},
+        {"pos": (60,120),   "t0": 120.0,   "sigma": 2, "amp": 5.0},
+        {"pos": (75, 75),   "t0": 250.0,   "sigma": 2, "amp": 5.0},
     ]
 
     solve_damped_wave_2d(
@@ -296,7 +298,7 @@ if __name__ == "__main__":
         gamma0=0.005,
         sponge_width=50,
         sponge_strength=1.5,
-        steps=500,
+        steps=1500,
 
         # (fallback source "train" si pulses=None)
         src1_pos=(60, 60),
@@ -310,7 +312,7 @@ if __name__ == "__main__":
         # capteurs
         sensor1_pos=(95, 95),
         sensor2_pos=(60, 120),
-        sensor3_pos=(120, 60),
+        sensor3_pos=(75, 75),
 
         bc="neumann",
         plot_every=8,
