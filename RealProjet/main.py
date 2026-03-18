@@ -4,7 +4,7 @@ from matplotlib.animation import FuncAnimation
 
 ## Constantes ##
 L = 100  # Longueur d'un côté du domaine [m]
-t = 0.05  # temps total de simulation [s]
+t = 1  # temps total de simulation [s]
 nx = 300  # nombre de points en x
 ny = 300  # nombre de points en y
 h = L / nx  # distance entre les points spatiaux [m]
