@@ -1,13 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-
-
+import pandas as pd
 # Le maillage de être au moins plus petit que la longueur d'onde sur 2
 
 ## Constantes ##
 L = 100  # Longueur d'un côté du domaine [m]
-t = 0.5  # temps total de simulation [s]
+t = 0.3  # temps total de simulation [s]
 nx = 300  # nombre de points en x
 ny = 300  # nombre de points en y
 h = L / nx  # distance entre les points spatiaux [m]
@@ -47,13 +46,13 @@ print(f"nt = {nt}")
 
 # Positions des capteurs
 sensor1_pos = (225, 150)
-sensor2_pos = (75, 75)
+sensor2_pos = (150, 75)
 sensor3_pos = (225, 75)
 
 pulses = [
     {"pos": sensor1_pos, "t0": 0},
-    {"pos": sensor2_pos, "t0": 0.2},
-    {"pos": sensor3_pos, "t0": 0.3},
+    {"pos": sensor2_pos, "t0": 0.1},
+    {"pos": sensor3_pos, "t0": 0.2},
 ]
 
 cx1, cy1 = sensor1_pos
@@ -250,36 +249,11 @@ show_pml(show_PML)
 show_capteurs = True
 graph_capteur(show_capteurs)
 
-import json
 
-def save_signals_to_json(filename, t_hist, p1_hist, p2_hist, p3_hist,
-                         sensor_positions):
-    data = {
-        "time": t_hist.tolist(),
-        "signals": {
-            "sensor_1": p1_hist.tolist(),
-            "sensor_2": p2_hist.tolist(),
-            "sensor_3": p3_hist.tolist(),
-        },
-        "sensor_positions": {
-            "sensor_1": {"x": sensor_positions[0][0], "y": sensor_positions[0][1]},
-            "sensor_2": {"x": sensor_positions[1][0], "y": sensor_positions[1][1]},
-            "sensor_3": {"x": sensor_positions[2][0], "y": sensor_positions[2][1]},
-        }
-    }
-
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=4)
-
-    print(f"Signaux sauvegardés dans {filename}")
-    open("signaux_capteurs.json", "w")
-
-save_signals_to_json(
-    "signaux_capteurs.json",
-    t_hist,
-    p1_hist,
-    p2_hist,
-    p3_hist,
-    [sensor1_pos, sensor2_pos, sensor3_pos]
-)
-
+df = pd.DataFrame({
+    "time": t_hist,
+    "sensor_1": p1_hist,
+    "sensor_2": p2_hist,
+    "sensor_3": p3_hist
+})
+df.to_csv("canvas.csv", index=False)
