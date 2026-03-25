@@ -281,9 +281,9 @@ if __name__ == "__main__":
 
     # Pulses à différentes positions (UNE seule source logique)
     pulses = [
-        {"pos": (95, 95),   "t0": 5.0,   "sigma": 2, "amp": 5.0},
-        {"pos": (60,120),   "t0": 120.0,   "sigma": 2, "amp": 5.0},
-        {"pos": (75, 75),   "t0": 250.0,   "sigma": 2, "amp": 5.0},
+        {"pos": (80,80),   "t0": 5.0,   "sigma": 2, "amp": 10.0},
+        {"pos": (65,120),   "t0": 120.0,   "sigma": 2, "amp": 25.0},
+        {"pos": (75, 75),   "t0": 250.0,   "sigma": 2, "amp": 50.0},
     ]
 
     solve_damped_wave_2d(
@@ -295,9 +295,9 @@ if __name__ == "__main__":
         dt_fixed=True,
         c_ref=2.0,
 
-        gamma0=0.005,
-        sponge_width=50,
-        sponge_strength=1.5,
+        gamma0=0.0005,
+        sponge_width=60,
+        sponge_strength=0.25,
         steps=1500,
 
         # (fallback source "train" si pulses=None)
@@ -310,8 +310,8 @@ if __name__ == "__main__":
         pulses=pulses,
 
         # capteurs
-        sensor1_pos=(95, 95),
-        sensor2_pos=(60, 120),
+        sensor1_pos=(80,80),
+        sensor2_pos=(65, 120),
         sensor3_pos=(75, 75),
 
         bc="neumann",

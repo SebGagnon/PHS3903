@@ -4,7 +4,7 @@ from matplotlib.animation import FuncAnimation
 
 ## Constantes ##
 L = 100  # Longueur d'un côté du domaine [m]
-t = 1  # temps total de simulation [s]
+t = 0.1  # temps total de simulation [s]
 nx = 300  # nombre de points en x
 ny = 300  # nombre de points en y
 h = L / nx  # distance entre les points spatiaux [m]
@@ -67,14 +67,14 @@ def pulse_gaussien_module(nx, ny, x0=None, y0=None, sigma=10, w=0.4, A0=1):
     return pulse
 
 #Conditions initiales
-u0 = pulse_gaussien_module(nx, ny, sigma=8, w=0.5, A0=1.0)  #pulse
+u0 = pulse_gaussien_module(nx, ny, sigma=10, w=0.5, A0=1.0)  #pulse
 
 u_nm1 = u0.copy()  # champ au temps n-1
 u_n = u0.copy()  # champ au temps n
 u_np1 = np.zeros((nx, ny))  # champ au temps n+1
 
 #PML
-epaisseur_pml = 75  # épaisseur 
+epaisseur_pml = 100  # épaisseur 
 gamma_max = 20000  # valeur maximale de gamma sur les bords finaux
 gamma = PML(nx, ny, epaisseur_pml, puissance=3, gamma_max=gamma_max)  
 
@@ -89,7 +89,7 @@ plt.tight_layout()
 plt.show()
 
 frames = []  # liste des images conservées pour l'animation
-pas_sauvegarde = max(1, nt // 120)  # intervalle entre deux sauvegardes d'image
+pas_sauvegarde = max(1, nt // 600)  # intervalle entre deux sauvegardes d'image
 
 # Loop
 for n in range(nt):
@@ -146,5 +146,5 @@ def maj(k):
     
     return [img]
 
-ani = FuncAnimation(fig, maj, frames=len(frames), interval=40, blit=True)
+ani = FuncAnimation(fig, maj, frames=len(frames), interval=1, blit=True)
 plt.show()
