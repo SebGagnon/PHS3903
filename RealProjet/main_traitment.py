@@ -62,10 +62,10 @@ c31, c32, c33 = p3_hist[:2753], p3_hist[2754:5507], p3_hist[5508:-1]
 # Le maillage de être au moins plus petit que la longueur d'onde sur 2
 
 ## Constantes ##
-L = 100  # Longueur d'un côté du domaine [m]
+L = 200  # Longueur d'un côté du domaine [m]
 t = 0.3  # temps total de simulation [s]
-nx = 300  # nombre de points en x
-ny = 300  # nombre de points en y
+nx = 600  # nombre de points en x
+ny = 600  # nombre de points en y
 h = L / nx  # distance entre les points spatiaux [m]
 
 Rho_eau = 1000  # densite volumique [kg/m3]
@@ -78,7 +78,7 @@ Gamma_acier = 8.1e10
 
 c_max = np.sqrt((Kappa_acier + 4/3 * Gamma_acier)/ Rho_acier) # vitesse du son dans l'eau [m/s]
 c_eau = np.sqrt( Kappa_eau/Rho_eau )
-C_grid =  c_eau * np.ones((nx-2, ny-2), dtype=float); C_grid[190:210, 190:210] = c_max
+C_grid =  c_eau * np.ones((nx-2, ny-2), dtype=float); C_grid[150:160, 190:210] = c_max
 
 alpha = {5: 3.24e-5,   # dictionnaire des coefficients alpha selon la fréquence [Np/m]
          10: 8.94e-5,
@@ -162,7 +162,7 @@ u_np1 = np.zeros((nx, ny))  # champ au temps n+1
 
 
 #PML
-epaisseur_pml = 75  # épaisseur 
+epaisseur_pml = 100  # épaisseur 
 gamma_max = 20000  # valeur maximale de gamma sur les bords finaux
 gamma = PML(nx, ny, epaisseur_pml, puissance=3, gamma_max=gamma_max)  
 

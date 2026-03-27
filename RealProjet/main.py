@@ -4,9 +4,9 @@ from matplotlib.animation import FuncAnimation
 
 ## Constantes ##
 L = 100  # Longueur d'un côté du domaine [m]
-t = 0.1  # temps total de simulation [s]
+t = 1  # temps total de simulation [s]
 nx = 300  # nombre de points en x
-ny = 300  # nombre de points en y
+ny = 300 # nombre de points en y
 h = L / nx  # distance entre les points spatiaux [m]
 
 rho = 1000  # densite volumique [kg/m3]
@@ -24,7 +24,7 @@ gamma_dict = {key: value * c for key, value in alpha.items()}  # dictionnaire de
 
 ## Pas de temps ##
 dt_max = h / (c * np.sqrt(2))  # pas de temps maximal pour respecter la condition CFL en 2D
-dt = 0.9 * dt_max  # pas de temps choisi avec une marge de sécurité
+dt = 1.00000000000000000001 * dt_max  # pas de temps choisi avec une marge de sécurité
 nt = int(t / dt)  # nombre de points temporels
 
 print(f"vitesse de l'onde = {c:.2f} m/s")
@@ -89,7 +89,7 @@ plt.tight_layout()
 plt.show()
 
 frames = []  # liste des images conservées pour l'animation
-pas_sauvegarde = max(1, nt // 600)  # intervalle entre deux sauvegardes d'image
+pas_sauvegarde = max(1, nt // 1500)  # intervalle entre deux sauvegardes d'image
 
 # Loop
 for n in range(nt):

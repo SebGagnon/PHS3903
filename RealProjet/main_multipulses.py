@@ -9,9 +9,9 @@ from scipy.signal import hilbert
 
 ## Constantes ##
 L = 100  # Longueur d'un côté du domaine [m]
-t = 0.3  # temps total de simulation [s]
-nx = 300  # nombre de points en x
-ny = 300  # nombre de points en y
+t = 0.2  # temps total de simulation [s]
+nx = 200  # nombre de points en x
+ny = 200  # nombre de points en y
 h = L / nx  # distance entre les points spatiaux [m]
 
 Rho_eau = 1000  # densite volumique [kg/m3]
@@ -81,7 +81,7 @@ def pulse_gaussien_module(nx, ny, x0=None, y0=None, sigma= 10 , w = 0.4, A0= 1 )
     return pulse
 
 #PML
-epaisseur_pml = 75  # épaisseur 
+epaisseur_pml = 25  # épaisseur 
 gamma_max = 20000  # valeur maximale de gamma sur les bords finaux
 gamma = PML(nx, ny, epaisseur_pml, puissance=3, gamma_max=gamma_max)  
 
@@ -249,9 +249,9 @@ show_pml(show_PML)
 
 position_bateau = [200, 200] # ( x, y )
 # Positions des capteurs
-sensor1_pos = (225, 150)
+sensor1_pos = (125, 125)
 sensor2_pos = (75, 75)
-sensor3_pos = (225, 75)
+sensor3_pos = (100, 100)
 position_capteurs = np.array([sensor1_pos, sensor2_pos, sensor3_pos])
 
 intensité_avec_bateau, t_hist = simulation_sonar(position_capteurs, position_bateau)
