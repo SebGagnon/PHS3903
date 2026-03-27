@@ -4,9 +4,9 @@ from matplotlib.animation import FuncAnimation
 
 ## Constantes ##
 L = 100  # Longueur d'un côté du domaine [m]
-t = 1  # temps total de simulation [s]
-nx = 300  # nombre de points en x
-ny = 300 # nombre de points en y
+t = 0.5  # temps total de simulation [s]
+nx = 250  # nombre de points en x
+ny = 250 # nombre de points en y
 h = L / nx  # distance entre les points spatiaux [m]
 
 rho = 1000  # densite volumique [kg/m3]
@@ -24,7 +24,7 @@ gamma_dict = {key: value * c for key, value in alpha.items()}  # dictionnaire de
 
 ## Pas de temps ##
 dt_max = h / (c * np.sqrt(2))  # pas de temps maximal pour respecter la condition CFL en 2D
-dt = 1.00000000000000000001 * dt_max  # pas de temps choisi avec une marge de sécurité
+dt = 0.95 * dt_max  # pas de temps choisi avec une marge de sécurité
 nt = int(t / dt)  # nombre de points temporels
 
 print(f"vitesse de l'onde = {c:.2f} m/s")
@@ -66,19 +66,30 @@ def pulse_gaussien_module(nx, ny, x0=None, y0=None, sigma=10, w=0.4, A0=1):
     pulse = A0 * np.exp(-(r**2) / (2 * sigma**2)) * np.cos(w * r)  # modulation en fonction de r
     return pulse
 
-#Conditions initiales
-u0 = pulse_gaussien_module(nx, ny, sigma=10, w=0.5, A0=1.0)  #pulse
+def source_temporelle_gaussienne(nx, ny, t, x0=None, y0=None, sigma=10, w=2*np.pi*5000, A0=1):
+    if x0 is None:
+        x0 = nx // 2
+    if y0 is None:
+        y0 = ny // 2
 
+    x, y = np.meshgrid(np.arange(nx), np.arange(ny), indexing='ij')
+    r2 = (x - x0)**2 + (y - y0)**2
+
+    source = A0 * np.exp(-r2 / (2 * sigma**2)) * np.cos(w * t)
+    return source
+
+# Conditions initiales
+u0 = pulse_gaussien_module(nx, ny, sigma=10, w=0.5, A0=1.0)  # pulse initial
 u_nm1 = u0.copy()  # champ au temps n-1
 u_n = u0.copy()  # champ au temps n
 u_np1 = np.zeros((nx, ny))  # champ au temps n+1
 
-#PML
-epaisseur_pml = 100  # épaisseur 
+# PML
+epaisseur_pml = int(0.3*nx)  # épaisseur 
 gamma_max = 20000  # valeur maximale de gamma sur les bords finaux
 gamma = PML(nx, ny, epaisseur_pml, puissance=3, gamma_max=gamma_max)  
 
-#Plot du PML initial
+# Plot du PML initial
 plt.figure(figsize=(6, 5))
 plt.imshow(gamma.T, origin="lower", cmap="inferno")
 plt.colorbar(label=r"$\gamma(x,y)$")
@@ -88,11 +99,13 @@ plt.ylabel("y")
 plt.tight_layout()
 plt.show()
 
-frames = []  # liste des images conservées pour l'animation
+frames = [u_n.copy()]  # liste des images conservées pour l'animation
 pas_sauvegarde = max(1, nt // 1500)  # intervalle entre deux sauvegardes d'image
 
 # Loop
 for n in range(nt):
+    t_n = n * dt  # temps courant
+
     lap = np.zeros_like(u_n)  # initialisation du laplacien
     lap[1:-1, 1:-1] = (
         u_n[2:, 1:-1] + u_n[:-2, 1:-1]
@@ -102,11 +115,15 @@ for n in range(nt):
 
     a = gamma * dt / 2  # coefficient local d'amortissement
 
+    # source gaussienne modulée dans le temps
+    source = source_temporelle_gaussienne(nx, ny, t_n, sigma=10, w=2*np.pi*5000, A0=1.0)
+
     u_np1[1:-1, 1:-1] = (
         2 * u_n[1:-1, 1:-1]
         - (1 - a[1:-1, 1:-1]) * u_nm1[1:-1, 1:-1]
         + c**2 * dt**2 * lap[1:-1, 1:-1]
-    ) / (1 + a[1:-1, 1:-1])  # mise à jour explicite de l'équation d'onde amortie
+        + dt**2 * source[1:-1, 1:-1]
+    ) / (1 + a[1:-1, 1:-1])  # mise à jour explicite 
 
     ## Frontières
     u_np1[0, :] = 0  # bord gauche
@@ -117,10 +134,10 @@ for n in range(nt):
     if n % pas_sauvegarde == 0:
         frames.append(u_n.copy())  # sauvegarde du champ pour l'animation
 
-    u_nm1[:, :] = u_n  #  n devient n-1
+    u_nm1[:, :] = u_n  # n devient n-1
     u_n[:, :] = u_np1  # n+1 devient n
 
-# Calcul de l'énergie résiudelle pour tester l'efficacité du PML
+# Calcul de l'énergie résiduelle pour tester l'efficacité du PML
 energie_initiale = np.sum(u0**2)  # Énergie initiale
 energie_finale = np.sum(u_n**2)  # Énergie finale
 
@@ -135,7 +152,7 @@ img = ax.imshow(
     origin="lower",
     cmap="seismic",
     extent=[0, L, 0, L],
-    animated=True
+    animated=False
 )
 plt.colorbar(img, ax=ax, label="Amplitude")
 ax.set_xlabel("x [m]")
@@ -143,8 +160,7 @@ ax.set_ylabel("y [m]")
 
 def maj(k):
     img.set_array(frames[k].T)
-    
     return [img]
 
-ani = FuncAnimation(fig, maj, frames=len(frames), interval=1, blit=True)
+ani = FuncAnimation(fig, maj, frames=len(frames), interval=1, blit=False)
 plt.show()
