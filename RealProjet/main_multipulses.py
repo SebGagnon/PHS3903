@@ -9,9 +9,9 @@ from scipy.signal import hilbert
 
 ## Constantes ##
 L = 100  # Longueur d'un côté du domaine [m]
-t = 0.2  # temps total de simulation [s]
-nx = 200  # nombre de points en x
-ny = 200  # nombre de points en y
+t = 0.3  # temps total de simulation [s]
+nx = 300  # nombre de points en x
+ny = 300  # nombre de points en y
 h = L / nx  # distance entre les points spatiaux [m]
 
 Rho_eau = 1000  # densite volumique [kg/m3]
@@ -24,7 +24,6 @@ Gamma_acier = 8.1e10
 
 c_max = np.sqrt((Kappa_acier + 4/3 * Gamma_acier)/ Rho_acier) # vitesse du son dans l'eau [m/s]
 c_eau = np.sqrt( Kappa_eau/Rho_eau )
-
 
 alpha = {5: 3.24e-5,   # dictionnaire des coefficients alpha selon la fréquence [Np/m]
          10: 8.94e-5,
@@ -40,13 +39,19 @@ dt_max = h / (c_max * np.sqrt(2))  # pas de temps maximal pour respecter la cond
 dt = 0.9 * dt_max  # pas de temps choisi avec une marge de sécurité
 nt = int(t / dt)  # nombre de points temporels
 
+# Temps des pulses
+t0_1 = 0.0
+t0_2 = 0.1
+t0_3 = 0.2
+t0_vect = np.array([t0_1, t0_2, t0_3])
+
+
 print(f"vitesse de l'onde maximale = {c_max:.2f} m/s")
 print(f"distance entre les points = {h:.4f} m")
 print(f"durée totale de la simul = {dt:.2e} s")
 print(f"nt = {nt}")
 
-
-## conditions aux frontières ##
+# Conditions aux frontières 
 c1, c2, c3 = 0, 0, 0 
 d1, d2, d3 = 0, 0, 0  
 e1, e2, e3 = 0, 0, 0  
@@ -80,11 +85,6 @@ def pulse_gaussien_module(nx, ny, x0=None, y0=None, sigma= 10 , w = 0.4, A0= 1 )
     pulse = A0 * np.exp(-(r**2) / (2 * sigma**2)) * np.cos(w * r)  # modulation en fonction de r
     return pulse
 
-#PML
-epaisseur_pml = 25  # épaisseur 
-gamma_max = 20000  # valeur maximale de gamma sur les bords finaux
-gamma = PML(nx, ny, epaisseur_pml, puissance=3, gamma_max=gamma_max)  
-
 def show_pml(show_PML):
     if show_PML == True:
 
@@ -98,11 +98,10 @@ def show_pml(show_PML):
         plt.tight_layout()
         plt.show()
 
-
-def simulation_sonar(position_capteurs, position_bateau, show_animation=True, show_capteurs=True):
+def simulation_sonar(position_capteurs, position_bateau, taille_bateau, show_animation = False, show_capteurs=False):
 
     #Conditions initiales
-    C_grid =  c_eau * np.ones((nx-2, ny-2), dtype=float);  C_grid[ (position_bateau[0]) : (position_bateau[0]+ 5), (position_bateau[1]- 5) : (position_bateau[1]+ 5)] = c_max
+    C_grid =  c_eau * np.ones((nx-2, ny-2), dtype=float);  C_grid[ (position_bateau[0] - taille_bateau) : (position_bateau[0] + taille_bateau), (position_bateau[1] - taille_bateau) : (position_bateau[1] + taille_bateau)] = c_max
     #u0 = pulse_gaussien_module(nx, ny, x0 = 225, y0 = 150)  #pulse
     u0 = np.zeros((nx, ny)) 
     u_nm1 = u0.copy()  # champ au temps n-1
@@ -111,9 +110,9 @@ def simulation_sonar(position_capteurs, position_bateau, show_animation=True, sh
 
 
     pulses = [
-        {"pos": sensor1_pos, "t0": 0},
-        {"pos": sensor2_pos, "t0": 0.1},
-        {"pos": sensor3_pos, "t0": 0.2},
+        {"pos": sensor1_pos, "t0": t0_1},
+        {"pos": sensor2_pos, "t0": t0_2},
+        {"pos": sensor3_pos, "t0": t0_3},
     ]
 
     cx1, cy1 = sensor1_pos
@@ -244,34 +243,225 @@ def simulation_sonar(position_capteurs, position_bateau, show_animation=True, sh
         
     return intensité_capteurs, t_hist
 
-show_PML = False
-show_pml(show_PML)
+def max_signaux(intensite_capteurs, t_hist):
+    """
+    intensite_capteurs : array [N_capteurs, N_samples]
+    """
 
-position_bateau = [200, 200] # ( x, y )
-# Positions des capteurs
-sensor1_pos = (125, 125)
-sensor2_pos = (75, 75)
-sensor3_pos = (100, 100)
-position_capteurs = np.array([sensor1_pos, sensor2_pos, sensor3_pos])
+    temps_max = []
+    amplitudes_max = []
 
-intensité_avec_bateau, t_hist = simulation_sonar(position_capteurs, position_bateau)
-intensité_sans_bateau, t_hist = simulation_sonar(position_capteurs, [5,5]) # Le bateau dans le pml comme si il était pas là
+    for signal in intensite_capteurs:
+        idx = np.argmax(signal)
+        temps_max.append(t_hist[idx])
+        amplitudes_max.append(signal[idx])
 
-intensité_echo = intensité_avec_bateau - intensité_sans_bateau
+    return np.array(temps_max), np.array(amplitudes_max)
 
-# Montrer ou non le graphique de l'echo
-def show_echo(Echo = True):
-    if Echo == True: 
+def max_enveloppe_ordre(signal, t_hist, ordre, seuil_ratio=0.2, dt_min=t/8):
+    """
+    ordre : numéro du pic (1,2,3...)
+    seuil_ratio : seuil amplitude relatif
+    dt_min : temps minimal entre deux pics (en secondes)
+    """
+
+    dt = t_hist[1] - t_hist[0]
+
+    # 🔹 Enveloppe
+    enveloppe = np.abs(hilbert(signal))
+
+    # 🔹 Seuil amplitude
+    seuil = seuil_ratio * np.max(enveloppe)
+
+    # 🔹 Seuil temporel → converti en indices
+    distance_min = int(dt_min / dt)
+
+    # 🔹 Détection des pics robuste
+    peaks, _ = find_peaks(
+        enveloppe,
+        height=seuil,
+        distance=distance_min,
+        prominence=seuil * 0.5
+    )
+
+    # 🔹 Sécurité
+    if len(peaks) < ordre:
+        return None, None, enveloppe
+
+    idx = peaks[ordre - 1]
+
+    t_max = t_hist[idx]
+    amp_max = enveloppe[idx]
+
+    return t_max, amp_max, enveloppe
+
+def show_echo(Echo=True):
+    if Echo:
         plt.figure(figsize=(8,5))
 
-        plt.plot(t_hist, intensité_echo[0], label="Capteur 1")
-        plt.plot(t_hist, intensité_echo[1], label="Capteur 2")
-        plt.plot(t_hist, intensité_echo[2], label="Capteur 3")
+        couleurs = ["red", "blue", "green"]
+        labels = ["Capteur 1", "Capteur 2", "Capteur 3"]
+
+        for i, signal in enumerate(intensité_echo):
+
+            ordre = i + 1  # 👈 clé ici !
+
+            t_max, amp_max, enveloppe = max_enveloppe_ordre(signal, t_hist, ordre)
+
+            # signal + enveloppe
+            plt.plot(t_hist, signal, color=couleurs[i], alpha=0.4)
+            plt.plot(t_hist, enveloppe, color=couleurs[i], linestyle="--", label=labels[i])
+
+            if t_max is not None:
+                plt.scatter(t_max, amp_max, color=couleurs[i], s=80)
+                plt.axvline(t_max, color=couleurs[i], linestyle=":")
 
         plt.xlabel("Temps [s]")
         plt.ylabel("Amplitude")
-        plt.title("Signaux écho (avec - sans bateau)")
+        plt.title("Échos avec pics ordonnés par capteur")
         plt.legend()
         plt.grid()
         plt.show()
-show_echo(True)
+
+def multilateration(intensite_capteurs, position_capteurs, c_eau):
+
+    intensite_capteurs = np.array(intensite_capteurs)
+    position_capteurs_m = np.array(position_capteurs)  # ← conversion en mètres
+
+    temps_echo = []
+
+    # -------- DETECTION DES TEMPS --------
+    for i, signal in enumerate(intensite_capteurs):
+        ordre = i + 1
+        t_max, amp_max, enveloppe = max_enveloppe_ordre(signal, t_hist, ordre)
+
+        if t_max is None:
+            raise ValueError(f"Pas assez de pics pour capteur {i+1}")
+
+        temps_echo.append(t_max)
+
+    temps_echo = np.array(temps_echo)
+
+    # -------- DISTANCES en noeuds --------
+    distances = c_eau * (temps_echo - t0_vect) / 2 / h
+
+    # -------- RÉSIDUS : différence entre distance réelle et rayon du cercle --------
+    def residuals(x):
+        return [
+            np.linalg.norm(x - position_capteurs_m[i]) - distances[i]
+            for i in range(len(distances))
+        ]
+
+    # -------- ESTIMATION INITIALE en mètres --------
+    x0 = np.mean(position_capteurs_m, axis = 0)
+
+    # -------- OPTIMISATION --------
+    sol = least_squares(residuals, x0)
+    position_estimee_m = sol.x  # en mètres
+
+    return position_estimee_m, temps_echo
+
+def plot_localisation_echo(position_capteurs, position_estimee, position_reelle, t0_vect, temps_echo, c_eau, taille_bateau, L=100, h=h):
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    n_capteurs = position_capteurs.shape[0]
+    couleurs_capteurs = ["red", "blue", "green"]
+
+    # --- Conversion maillage → mètres ---
+    capteurs_m = position_capteurs * h          # shape [N, 2]
+    estimee_m  = np.array(position_estimee) * h
+    reelle_m   = np.array(position_reelle)  * h
+
+    # --- Objet réel ---
+    x_r, y_r = reelle_m
+    bateau_reel = plt.Rectangle(
+        (y_r - taille_bateau / 2, x_r - taille_bateau / 2),
+        taille_bateau, taille_bateau,
+        color="black", alpha=0.6, label="Position réelle", zorder=4
+    )
+    ax.add_patch(bateau_reel)
+
+    # --- Position estimée ---
+    x_e, y_e = estimee_m
+    ax.scatter(y_e, x_e, marker="*", color="gold", s=250, zorder=5,
+               edgecolors="black", linewidths=0.8, label="Position estimée (MC)")
+
+    # --- Capteurs + cercles + lignes ---
+    for i in range(n_capteurs):
+        x_c, y_c = capteurs_m[i]
+        couleur = couleurs_capteurs[i]
+
+        ax.scatter(y_c, x_c, color=couleur, s=100, zorder=4, marker="^")
+        ax.text(y_c + 0.5, x_c + 0.5, f"C{i+1}", color=couleur, fontsize=10, fontweight="bold")
+
+        # Distance en mètres
+        distance = c_eau * (temps_echo[i] - t0_vect[i]) / 2
+
+        # Cercle de distance centré sur le capteur (en mètres)
+        cercle = plt.Circle(
+            (y_c, x_c), radius=distance,
+            color=couleur, fill=False, linestyle="--", linewidth=1.2, alpha=0.7,
+            label=f"C{i+1} — d = {distance:.1f} m"
+        )
+        ax.add_patch(cercle)
+
+        # Ligne capteur → estimée
+        ax.plot([y_c, y_e], [x_c, x_e],
+                color=couleur, linestyle="-", linewidth=1.2, alpha=0.6)
+
+        # Annotation distance
+        mid_x = (y_c + y_e) / 2
+        mid_y = (x_c + x_e) / 2
+        ax.text(mid_x, mid_y, f"{distance:.1f} m", color=couleur,
+                fontsize=8, ha="center",
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.6))
+
+    # --- Erreur ---
+    erreur = np.linalg.norm(estimee_m - reelle_m)
+    ax.set_title(f"Localisation par multilatération\nErreur : {erreur:.2f} m", fontsize=13)
+
+    ax.set_xlim(0, L)
+    ax.set_ylim(0, L)
+    ax.set_xlabel("y [m]")
+    ax.set_ylabel("x [m]")
+    ax.set_aspect("equal")
+    ax.grid(True, alpha=0.4)
+    ax.legend(loc="upper right", fontsize=9)
+    plt.tight_layout()
+    plt.show()
+
+# Paramètre du PML
+epaisseur_pml = 75  # épaisseur 
+gamma_max = 20000  # valeur maximale de gamma sur les bords finaux
+gamma = PML(nx, ny, epaisseur_pml, puissance=3, gamma_max=gamma_max)  
+
+# Graphique du PML
+show_pml(False)
+
+# Position et taille du bateau (pour le moment c'est juste un carré)
+position_bateau = [160, 75] # ( x, y ) en position du noeud
+taille_bateau = 4 # En nombre de noeuds
+
+# Positions des capteurs (en position du noeud)
+sensor1_pos = (75, 225)
+sensor2_pos = (75, 75)
+sensor3_pos = (225, 75)
+position_capteurs = np.array([sensor1_pos, sensor2_pos, sensor3_pos])
+
+# Sert à trouver l'intensité de l'echo (on pourrait optimiser quand on va faire pleins de simulations pour ne pas refaire celle sans bateau)
+intensité_avec_bateau, t_hist = simulation_sonar(position_capteurs, position_bateau, taille_bateau)
+intensité_sans_bateau, t_hist = simulation_sonar(position_capteurs, [5,5], taille_bateau) # Le bateau dans le pml comme si il était pas là
+intensité_echo = intensité_avec_bateau - intensité_sans_bateau
+
+# Graphique de l'echo
+show_echo(False)
+
+# Trouver la position de l'objet avec la multilatération
+pos, temps_echo = multilateration(intensité_echo, position_capteurs, c_eau)
+print("Position réelle", position_bateau, "et il a un rayon de 5")
+print("Position estimée :", pos)
+
+# Afficher le graphique de la position estimée
+plot_localisation_echo(position_capteurs, pos, position_bateau, t0_vect, temps_echo, c_eau, taille_bateau)
+
+
