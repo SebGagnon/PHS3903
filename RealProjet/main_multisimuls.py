@@ -10,8 +10,8 @@ from scipy.signal import hilbert
 ## Constantes ##
 L = 100  # Longueur d'un côté du domaine [m]
 t = 0.3  # temps total de simulation [s]
-nx = 300  # nombre de points en x
-ny = 300  # nombre de points en y
+nx = 100  # nombre de points en x
+ny = 100  # nombre de points en y
 h = L / nx  # distance entre les points spatiaux [m]
 
 Rho_eau = 1000  # densite volumique [kg/m3]

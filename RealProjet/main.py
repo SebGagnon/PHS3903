@@ -4,9 +4,9 @@ from matplotlib.animation import FuncAnimation
 
 ## Constantes ##
 L = 100  # Longueur d'un côté du domaine [m]
-t = 0.5  # temps total de simulation [s]
-nx = 250  # nombre de points en x
-ny = 250 # nombre de points en y
+t = 0.3  # temps total de simulation [s]
+nx = 200  # nombre de points en x
+ny = 200 # nombre de points en y
 h = L / nx  # distance entre les points spatiaux [m]
 
 rho = 1000  # densite volumique [kg/m3]
@@ -108,10 +108,16 @@ for n in range(nt):
 
     lap = np.zeros_like(u_n)  # initialisation du laplacien
     lap[1:-1, 1:-1] = (
-        u_n[2:, 1:-1] + u_n[:-2, 1:-1]
-        + u_n[1:-1, 2:] + u_n[1:-1, :-2]
-        - 4 * u_n[1:-1, 1:-1]
-    ) / h**2  # calcul du laplacien par différences centrées
+        4 * (
+            u_n[2:, 1:-1] + u_n[:-2, 1:-1]
+            + u_n[1:-1, 2:] + u_n[1:-1, :-2]
+        )
+        + (
+            u_n[2:, 2:] + u_n[2:, :-2]
+            + u_n[:-2, 2:] + u_n[:-2, :-2]
+        )
+        - 20 * u_n[1:-1, 1:-1]
+    ) / (6 * h**2)  # laplacien à 9 points
 
     a = gamma * dt / 2  # coefficient local d'amortissement
 
@@ -123,20 +129,20 @@ for n in range(nt):
         - (1 - a[1:-1, 1:-1]) * u_nm1[1:-1, 1:-1]
         + c**2 * dt**2 * lap[1:-1, 1:-1]
         + dt**2 * source[1:-1, 1:-1]
-    ) / (1 + a[1:-1, 1:-1])  # mise à jour explicite 
+    ) / (1 + a[1:-1, 1:-1])  # mise à jour explicite
 
     ## Frontières
-    u_np1[0, :] = 0  # bord gauche
-    u_np1[-1, :] = 0  # bord droit
-    u_np1[:, 0] = 0  # bord bas
-    u_np1[:, -1] = 0  # bord haut
+    u_np1[0, :] = 0    # bord gauche
+    u_np1[-1, :] = 0   # bord droit
+    u_np1[:, 0] = 0    # bord bas
+    u_np1[:, -1] = 0   # bord haut
 
     if n % pas_sauvegarde == 0:
         frames.append(u_n.copy())  # sauvegarde du champ pour l'animation
 
-    u_nm1[:, :] = u_n  # n devient n-1
-    u_n[:, :] = u_np1  # n+1 devient n
-
+    u_nm1[:, :] = u_n   # n devient n-1
+    u_n[:, :] = u_np1   # n+1 devient n
+    
 # Calcul de l'énergie résiduelle pour tester l'efficacité du PML
 energie_initiale = np.sum(u0**2)  # Énergie initiale
 energie_finale = np.sum(u_n**2)  # Énergie finale
