@@ -5,23 +5,15 @@ import csv
 from scipy import signal
 import matplotlib.patches as patches
 from scipy.signal import hilbert
-
-
-# ============================================================
-# SIMULATION CANVAS (eau seulement, sans inclusion)
-# ============================================================
-
-
-# --- Verify ---
-# Le maillage de être au moins plus petit que la longueur d'onde sur 2
+from scipy.ndimage import gaussian_filter1d
 
 ## Constantes ##
-L = 100  # Longueur d'un côté du domaine [m]
-t = 0.3  # temps total de simulation [s]
-nx = 300  # nombre de points en x
-ny = 300  # nombre de points en y
+L = 400  # Longueur d'un côté du domaine [m]
+t = 1.2  # temps total de simulation [s]
+nx = 1200  # nombre de points en x
+ny = 1200  # nombre de points en y
 h = L / nx  # distance entre les points spatiaux [m]
-
+positionbat = [[360,410], [290,310]]
 Rho_eau = 1000  # densite volumique [kg/m3]
 Kappa_eau = 2.2e9  # bulk modulus [Pa]
 Gamma_eau = 0
@@ -32,7 +24,6 @@ Gamma_acier = 8.1e10
 
 c_max = np.sqrt((Kappa_acier + 4/3 * Gamma_acier)/ Rho_acier) # vitesse du son dans l'eau [m/s]
 c_eau = np.sqrt( Kappa_eau/Rho_eau )
-C_grid =  c_eau * np.ones((nx-2, ny-2), dtype=float); C_grid[120:140, 190:210] = c_max
 
 alpha = {5: 3.24e-5,   # dictionnaire des coefficients alpha selon la fréquence [Np/m]
          10: 8.94e-5,
@@ -57,13 +48,25 @@ print(f"nt = {nt}")
 
 # Positions des capteurs
 sensor1_pos = (75, 75)
-sensor2_pos = (150, 75)
-sensor3_pos = (75, 150)
+sensor2_pos = (100, 75)
+sensor3_pos = (75, 100)
+t1 = 0
+t2 = 0.4
+t3 = 0.8
 
+# Dynamique selon dt
+n0_1 = int(t1 / dt)   # pulse 1 at t0=0
+n0_2 = int(t2 / dt)   # pulse 2 at t0=0.1
+n0_3 = int(t3 / dt)   # pulse 3 at t0=0.2
+pulse_len = n0_2 - n0_1  # samples per pulse window
+nlist = [n0_1, n0_2, n0_3]
+print(nlist)
+
+#
 pulses = [
-    {"pos": sensor1_pos, "t0": 0},
-    {"pos": sensor2_pos, "t0": 0.1},
-    {"pos": sensor3_pos, "t0": 0.2},
+    {"pos": sensor1_pos, "t0": t1},
+    {"pos": sensor2_pos, "t0": t2},
+    {"pos": sensor3_pos, "t0": t3},
 ]
 
 cx1, cy1 = sensor1_pos
@@ -109,10 +112,6 @@ def pulse_gaussien_module(nx, ny, x0=None, y0=None, sigma= 10 , w = 0.4, A0= 1 )
 
 #Conditions initiales
 #u0 = pulse_gaussien_module(nx, ny, x0 = 225, y0 = 150)  #pulse
-u0 = np.zeros((nx, ny)) 
-u_nm1 = u0.copy()  # champ au temps n-1
-u_n = u0.copy()  # champ au temps n
-u_np1 = np.zeros((nx, ny))  # champ au temps n+1
 
 
 #PML
@@ -133,301 +132,418 @@ def show_pml(show_PML):
         plt.tight_layout()
         plt.show()
 
-def apply_threshold(s, threshold=0.001):
+
+def apply_threshold(s, threshold=0.0006):
     s = s.copy()
-    s[np.abs(s) < threshold * np.max(np.abs(s))] = 0
+    s[np.abs(s) < threshold ] = 0
     return s
 
-def corr_delay(s1, s2, threshold=0.001):
+
+def gaussian_smooth(s, sigma=84):
+    return gaussian_filter1d(s, sigma=sigma)
+
+def square_wave_filter(s, width=200):
+    kernel = np.ones(width)
+    return np.convolve(s, kernel, mode='same')
+
+
+def corr_delay(s1, s2, threshold=0.0003, 
+                 smooth='gaussian', sigma = 84, width=200):
     s1 = apply_threshold(s1, threshold)
     s2 = apply_threshold(s2, threshold)
+    
+    if smooth == 'gaussian':
+        s1 = gaussian_smooth(s1, sigma=sigma)
+        s2 = gaussian_smooth(s2, sigma=sigma)
+    elif smooth == 'square':
+        s1 = square_wave_filter(s1, width=width)
+        s2 = square_wave_filter(s2, width=width)
+
     lags = signal.correlation_lags(len(s1), len(s2), mode='full')
     r = lags[np.argmax(signal.correlate(s1, s2, mode='full'))]
     return r
 
-def GCCPHAT(s1, s2, threshold=0.001):
-    s1 = apply_threshold(s1, threshold)
-    s2 = apply_threshold(s2, threshold)
-    n = len(s1) + len(s2) - 1
-    if n % 2 != 0:
-        n += 1
-    S1 = np.fft.rfft(s1, n=n)
-    S2 = np.fft.rfft(s2, n=n)
-    produit = S1 * np.conj(S2)
-    amplitude = np.abs(produit)
-    corr_phi = np.fft.irfft(produit / (amplitude + 1e-10), n=n)
-    lags = signal.correlation_lags(len(s1), len(s2), mode='full')
-    delai = lags[np.argmax(corr_phi[:len(lags)])]
-    return delai
+def calc_sigma_test(Filtered_data, cx123, cy123, C123):
+    error=0
+    gerror=0    
+    for sigma in [30,60,90,120,150,180,210,240,270, 300, 330, 360, 390,420]:
+        gerror = 0
+        for i in range(3):
+            rth = np.sqrt(
+                min(((cx123[i] - np.array(positionbat[0])) * L / nx)**2) +
+                min(((cy123[i] - np.array(positionbat[1])) * L / nx)**2))
 
-def centroid_delay(s1, s2, threshold=0.001):
-    s1 = apply_threshold(s1, threshold)
-    s2 = apply_threshold(s2, threshold)
-    t1 = np.arange(len(s1))
-    t2 = np.arange(len(s2))
-    e1 = np.abs(s1)
-    e2 = np.abs(s2)
-    c1 = np.sum(t1 * e1) / (np.sum(e1) + 1e-10)
-    c2 = np.sum(t2 * e2) / (np.sum(e2) + 1e-10)
-    return c1 - c2
-
-def hilbert_centroid_delay(s1, s2, threshold=0.001):
-    s1 = apply_threshold(s1, threshold)
-    s2 = apply_threshold(s2, threshold)
-    t1 = np.arange(len(s1))
-    t2 = np.arange(len(s2))
-    e1 = np.abs(hilbert(s1))
-    e2 = np.abs(hilbert(s2))
-    e1[e1 < threshold * np.max(e1)] = 0
-    e2[e2 < threshold * np.max(e2)] = 0
-    c1 = np.sum(t1 * e1) / (np.sum(e1) + 1e-10)
-    c2 = np.sum(t2 * e2) / (np.sum(e2) + 1e-10)
-    return c1 - c2
-
-def hybrid_delay(s1, s2, threshold=0.001, window=round(0.02/dt)):
-    s1 = apply_threshold(s1, threshold)
-    s2 = apply_threshold(s2, threshold)
-
-    # Step 1 : corrélation pour trouver la région du pic
-    corr = signal.correlate(s1, s2, mode='full')
-    lags = signal.correlation_lags(len(s1), len(s2), mode='full')
-    idx_peak = np.argmax(corr)
-
-    # Step 2 : fenêtre autour du pic
-    i_start = max(0, idx_peak - window)
-    i_end   = min(len(corr), idx_peak + window)
-
-    corr_window = corr[i_start:i_end]
-    lags_window = lags[i_start:i_end]
-
-    # Step 3 : Hilbert centroid dans la fenêtre
-    e = np.abs(hilbert(corr_window))
-    e[e < threshold * np.max(e)] = 0
-
-    centroid = np.sum(lags_window * e) / (np.sum(e) + 1e-10)
-
-    return centroid
+            grayon = np.abs(c_eau * dt / 2 * corr_delay(
+                np.abs(C123[i]), np.abs(Filtered_data[i][i]),
+                smooth='gaussian', sigma=sigma))
+            #if 100 * np.abs(grayon - rth) / (3 * rth) < 50:
+            gerror += 100 * np.abs(grayon - rth) / (3 * rth)
+        print(f"{grayon:2f}")    
+        print(f"sigma = {sigma} : {gerror:.2f}%") 
+    #return 84
 
 def calc_dist(Filtered_data, cx123, cy123, C123):
+    error=0
+    gerror=0
     for i in range(3):
-        ric = c_eau*dt/2 * corr_delay(C123[i], Filtered_data[i][i])
-        rig = c_eau*dt/2 * GCCPHAT(C123[i], Filtered_data[i][i])
-        rim = c_eau*dt/2 * centroid_delay(C123[i], Filtered_data[i][i])
-        rih = c_eau*dt/2 * hilbert_centroid_delay(C123[i], Filtered_data[i][i])
-        riw = c_eau*dt/2 * hybrid_delay(C123[i], Filtered_data[i][i])
+        grayon = np.abs(c_eau * dt / 2 * corr_delay(
+                np.abs(C123[i]), np.abs(Filtered_data[i][i]),
+                smooth='gaussian', sigma=84))
+        grth = np.sqrt(
+                min(((cx123[i] - np.array(positionbat[0])) * L / nx)**2) +
+                min(((cy123[i] - np.array(positionbat[1])) * L / nx)**2))
 
-        print(f"corr = {ric}")
-        print(f"GCC-PHAT = {rig}")
-        print(f"centroid = {rim}")
-        print(f"hilbert = {rih}\n")
-        print(f"wombo combo = {riw}\n")
-        print(f"vrai = {np.sqrt(((cx123[i] - 120)/3)**2 + ((cy123[i] - 190)/3)**2)}\n")
+        rayon = np.abs(c_eau * dt / 2 * corr_delay(
+                np.abs(C123[i]), np.abs(Filtered_data[i][i]),
+                smooth='rien'))
+        rth = np.sqrt(
+                min(((cx123[i] - np.array(positionbat[0])) * L / nx)**2) +
+                min(((cy123[i] - np.array(positionbat[1])) * L / nx)**2))
+        gerror += 100 * np.abs(grayon - grth) / (3 * rth)
+        error += 100 * np.abs(rayon - rth) / (3 * rth)
+
+        print(grayon)
+        print(f'{grth}\n')
+        print(rayon)
+        print(f'{rth}\n')
+    print(f"{gerror}\n")
+    print(f"{error}\n")
+    #return 84
+
+def optimisation_filtre(cx123, cy123, C123):
+    lrayon = []
+    sigs = []
+    phi = (1 + np.sqrt(5)) / 2
+
+    for n in range(20):
+        print(f"{100*n/6:.2f}%")
+        positionbat = [[100+n*5, 110+n*5], [100, 110]]
+        Filtered_data, fp0, fp1, fp2 = simulation(positionbat=positionbat)
+
+        def calc_error(sigma):
+            error = 0
+            ath = 0
+            for i in range(3):
+                rayon = np.abs(c_eau * dt / 2 * corr_delay(
+                    np.abs(C123[i]), np.abs(Filtered_data[i][i]),
+                    smooth='gaussian', sigma=sigma))
+                rth = np.sqrt(
+                    min(((cx123[i] - np.array(positionbat[0])) * L / nx)**2) +
+                    min(((cy123[i] - np.array(positionbat[1])) * L / nx)**2))
+                error += 100 * np.abs(rayon - rth) / (3 * rth)
+                ath += rth / 3
+            return error, ath  # scalar error, average rth
+
+        # Reset interval for each boat position
+        a, b = 1, 600
+        c = b - (b - a) / phi
+        d = a + (b - a) / phi
+        perror = float('inf')
+        best_sigma = c
+
+        for iteration in range(80):
+            e_c, _ = calc_error(c)  # unpack tuple, ignore ath
+            e_d, _ = calc_error(d)
+
+            if e_c < e_d:           # now comparing scalars ✓
+                b = d
+                best_sigma = c
+                perror = min(perror, e_c)
+            else:
+                a = c
+                best_sigma = d
+                perror = min(perror, e_d)
+
+            c = b - (b - a) / phi
+            d = a + (b - a) / phi
+
+        _, ath = calc_error(best_sigma)  # get ath at best sigma
+        print(f"best_sigma={best_sigma:.2f}  error={perror:.2f}%  rth={ath:.2f}m")
+        lrayon.append(ath)
+        sigs.append(best_sigma)
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(lrayon, sigs, marker='o', markersize=3)
+    plt.xlabel("Distance [m]")
+    plt.ylabel("Meilleur sigma")
+    plt.title("Sigma optimal vs distance")
+    plt.grid()
+    plt.show()
+    print(lrayon)
+    print(sigs)
+    return sigs
+
+
 
 frames = []  # liste des images conservées pour l'animation
-pas_sauvegarde = max(1, nt // 500)  # intervalle entre deux sauvegardes d'image
+pas_sauvegarde = max(1, nt // 100)  # intervalle entre deux sauvegardes d'image
 
+def pulse_canvas():    
+    u0 = np.zeros((nx, ny)) 
+    u_nm1 = u0.copy()  # champ au temps n-1
+    u_n = u0.copy()  # champ au temps n
+    u_np1 = np.zeros((nx, ny))  # champ au temps n+1
+
+    C_grid_canvas = c_eau * np.ones((nx-2, ny-2), dtype=float)  # pas d'inclusion
+    pulse_indices = []
+
+    for p in pulses:
+        pulse_indices.append({
+            "pos": p["pos"],
+            "n0": int(p["t0"] / dt)
+        })
+
+
+    steps = nt
+    u0_c = np.zeros((nx, ny))
+    u_nm1_c = u0_c.copy()
+    u_n_c = u0_c.copy()
+    u_np1_c = np.zeros((nx, ny))
+
+    c11_hist = np.zeros(steps)
+    c22_hist = np.zeros(steps)
+    c33_hist = np.zeros(steps)
+    
+    for n in range(nt):
+        lap_c = np.zeros_like(u_n_c)
+        lap_c[1:-1, 1:-1] = (
+            u_n_c[2:, 1:-1] + u_n_c[:-2, 1:-1]
+            + u_n_c[1:-1, 2:] + u_n_c[1:-1, :-2]
+            - 4 * u_n_c[1:-1, 1:-1]
+        ) / h**2
+
+        a_c = gamma * dt / 2
+
+        u_np1_c[1:-1, 1:-1] = (
+            2 * u_n_c[1:-1, 1:-1]
+            - (1 - a_c[1:-1, 1:-1]) * u_nm1_c[1:-1, 1:-1]
+            + C_grid_canvas**2 * dt**2 * lap_c[1:-1, 1:-1]
+        ) / (1 + a_c[1:-1, 1:-1])
+
+        for pulse in pulse_indices:
+            if n == pulse["n0"]:
+                sx, sy = pulse["pos"]
+                array_pulse = pulse_gaussien_module(nx, ny, x0=sx, y0=sy)
+                u_n_c   = u_n_c   + array_pulse
+                u_np1_c = u_np1_c + array_pulse
+    
+        u_np1_c[0, :] = 0
+        u_np1_c[-1, :] = 0
+        u_np1_c[:, 0] = 0
+        u_np1_c[:, -1] = 0
+    
+        c11_hist[n] = u_n_c[cx1, cy1]
+        c22_hist[n] = u_n_c[cx2, cy2]
+        c33_hist[n] = u_n_c[cx3, cy3]
+
+        u_nm1_c[:, :] = u_n_c
+        u_n_c[:, :]   = u_np1_c
+ 
+    c11, c12, c13 = c11_hist[n0_1:n0_2], c11_hist[n0_2:n0_3], c11_hist[n0_3:]
+    c21, c22, c23 = c22_hist[n0_1:n0_2], c22_hist[n0_2:n0_3], c22_hist[n0_3:]
+    c31, c32, c33 = c33_hist[n0_1:n0_2], c33_hist[n0_2:n0_3], c33_hist[n0_3:]
+    clist = [[c11,c12,c13],[c21,c22,c23],[c31,c32,c33]]
+    C123 = [c11, c22, c33]
+    return C123, clist 
+C123, clist = 0, 0#pulse_canvas()
+
+
+def simulation(positionbat = positionbat, clist = clist, show_ani = False):
+    
+    C_grid =  c_eau * np.ones((nx-2, ny-2), dtype=float); C_grid[positionbat[0][0]:positionbat[0][1], positionbat[1][0]:positionbat[1][1]] = c_max
 # buffers capteurs
-steps = nt
-t_hist  = np.zeros(steps)
-p1_hist = np.zeros(steps)
-p2_hist = np.zeros(steps)
-p3_hist = np.zeros(steps)
+    u0 = np.zeros((nx, ny)) 
+    u_nm1 = u0.copy()  # champ au temps n-1
+    u_n = u0.copy()  # champ au temps n
+    u_np1 = np.zeros((nx, ny))  # champ au temps n+1
 
-pulse_indices = []
 
-for p in pulses:
-    pulse_indices.append({
-        "pos": p["pos"],
-        "n0": int(p["t0"] / dt)
-    })
+    steps = nt
+    t_hist  = np.zeros(steps)
+    p1_hist = np.zeros(steps)
+    p2_hist = np.zeros(steps)
+    p3_hist = np.zeros(steps)
 
-temps = 0
+    pulse_indices = []
+
+    for p in pulses:
+        pulse_indices.append({
+            "pos": p["pos"],
+            "n0": int(p["t0"] / dt)
+        })
+
+    temps = 0
 # Loop
-for n in range(nt):
+    for n in range(nt):
 
-    lap = np.zeros_like(u_n)  # initialisation du laplacien
-    lap[1:-1, 1:-1] = (
-        u_n[2:, 1:-1] + u_n[:-2, 1:-1]
-        + u_n[1:-1, 2:] + u_n[1:-1, :-2]
-        - 4 * u_n[1:-1, 1:-1]
-    ) / h**2  # calcul du laplacien par différences centrées
+        lap = np.zeros_like(u_n)  # initialisation du laplacien
+        lap[1:-1, 1:-1] = (
+            u_n[2:, 1:-1] + u_n[:-2, 1:-1]
+            + u_n[1:-1, 2:] + u_n[1:-1, :-2]
+            - 4 * u_n[1:-1, 1:-1]
+        ) / h**2  # calcul du laplacien par différences centrées
 
-    a = gamma * dt / 2  # coefficient local d'amortissement
+        a = gamma * dt / 2  # coefficient local d'amortissement
 
-    u_np1[1:-1, 1:-1] = (
-        2 * u_n[1:-1, 1:-1]
-        - (1 - a[1:-1, 1:-1]) * u_nm1[1:-1, 1:-1]
-        + C_grid**2 * dt**2 * lap[1:-1, 1:-1]
-    ) / (1 + a[1:-1, 1:-1])  # mise à jour explicite de l'équation d'onde amortie
+        u_np1[1:-1, 1:-1] = (
+            2 * u_n[1:-1, 1:-1]
+            - (1 - a[1:-1, 1:-1]) * u_nm1[1:-1, 1:-1]
+            + C_grid**2 * dt**2 * lap[1:-1, 1:-1]
+        ) / (1 + a[1:-1, 1:-1])  # mise à jour explicite de l'équation d'onde amortie
 
     # Détection des pulses
-    for pulse in pulse_indices:
-        if n == pulse["n0"]:
-            sx, sy = pulse["pos"]
-            array_pulse = pulse_gaussien_module(nx, ny, x0 = sx, y0 = sy)
+        for pulse in pulse_indices:
+            if n == pulse["n0"]:
+                sx, sy = pulse["pos"]
+                array_pulse = pulse_gaussien_module(nx, ny, x0 = sx, y0 = sy)
 
-            u_n = u_n + array_pulse
-            u_np1 = u_np1 + array_pulse
+                u_n = u_n + array_pulse
+                u_np1 = u_np1 + array_pulse
 
 
     ## Frontières
-    u_np1[0, :] = 0  # bord gauche
-    u_np1[-1, :] = 0  # bord droit
-    u_np1[:, 0] = 0  # bord bas
-    u_np1[:, -1] = 0  # bord haut
+        u_np1[0, :] = 0  # bord gauche
+        u_np1[-1, :] = 0  # bord droit
+        u_np1[:, 0] = 0  # bord bas
+        u_np1[:, -1] = 0  # bord haut
 
 
     # Enregistrement capteurs
-    t_hist[n]  = n*dt
-    p1_hist[n] = u_n[cx1, cy1]
-    p2_hist[n] = u_n[cx2, cy2]
-    p3_hist[n] = u_n[cx3, cy3]
+        t_hist[n]  = n*dt
+        p1_hist[n] = u_n[cx1, cy1]
+        p2_hist[n] = u_n[cx2, cy2]
+        p3_hist[n] = u_n[cx3, cy3]
+        if show_ani == True:
+            if n % pas_sauvegarde == 0:
+                frames.append(u_n.copy())  # sauvegarde du champ pour l'animation
 
-    if n % pas_sauvegarde == 0:
-        frames.append(u_n.copy())  # sauvegarde du champ pour l'animation
+        u_nm1[:, :] = u_n  #  n devient n-1
+        u_n[:, :] = u_np1  # n+1 devient n
+        temps = temps = dt
 
-    u_nm1[:, :] = u_n  #  n devient n-1
-    u_n[:, :] = u_np1  # n+1 devient n
-    temps = temps = dt
-
-C_grid_canvas = c_eau * np.ones((nx-2, ny-2), dtype=float)  # pas d'inclusion
-
-u0_c = np.zeros((nx, ny))
-u_nm1_c = u0_c.copy()
-u_n_c = u0_c.copy()
-u_np1_c = np.zeros((nx, ny))
-
-c11_hist = np.zeros(steps)
-c22_hist = np.zeros(steps)
-c33_hist = np.zeros(steps)
-
-for n in range(nt):
-    lap_c = np.zeros_like(u_n_c)
-    lap_c[1:-1, 1:-1] = (
-        u_n_c[2:, 1:-1] + u_n_c[:-2, 1:-1]
-        + u_n_c[1:-1, 2:] + u_n_c[1:-1, :-2]
-        - 4 * u_n_c[1:-1, 1:-1]
-    ) / h**2
-
-    a_c = gamma * dt / 2
-
-    u_np1_c[1:-1, 1:-1] = (
-        2 * u_n_c[1:-1, 1:-1]
-        - (1 - a_c[1:-1, 1:-1]) * u_nm1_c[1:-1, 1:-1]
-        + C_grid_canvas**2 * dt**2 * lap_c[1:-1, 1:-1]
-    ) / (1 + a_c[1:-1, 1:-1])
-
-    for pulse in pulse_indices:
-        if n == pulse["n0"]:
-            sx, sy = pulse["pos"]
-            array_pulse = pulse_gaussien_module(nx, ny, x0=sx, y0=sy)
-            u_n_c   = u_n_c   + array_pulse
-            u_np1_c = u_np1_c + array_pulse
-
-    u_np1_c[0, :] = 0
-    u_np1_c[-1, :] = 0
-    u_np1_c[:, 0] = 0
-    u_np1_c[:, -1] = 0
-
-    c11_hist[n] = u_n_c[cx1, cy1]
-    c22_hist[n] = u_n_c[cx2, cy2]
-    c33_hist[n] = u_n_c[cx3, cy3]
-
-    u_nm1_c[:, :] = u_n_c
-    u_n_c[:, :]   = u_np1_c
-
-# Découpage identique à l'ancienne version CSV
-c11, c12, c13 = c11_hist[:2753], c11_hist[2754:5507], c11_hist[5508:-1]
-c21, c22, c23 = c22_hist[:2753], c22_hist[2754:5507], c22_hist[5508:-1]
-c31, c32, c33 = c33_hist[:2753], c33_hist[2754:5507], c33_hist[5508:-1]
-C123 = [c11, c22, c33]
+    plist = [[p1_hist[n0_1:n0_2], p1_hist[n0_2:n0_3], p1_hist[n0_3:]],
+            [p2_hist[n0_1:n0_2], p2_hist[n0_2:n0_3], p2_hist[n0_3:]],
+            [p3_hist[n0_1:n0_2], p3_hist[n0_2:n0_3], p3_hist[n0_3:]]]
+    Filtered_data = [[plist[i][j] - clist[i][j] for j in range(3)] for i in range(3)]
+    
+    fp0 = np.concatenate((Filtered_data[0][0],Filtered_data[0][1],Filtered_data[0][2]))
+    fp1 = np.concatenate((Filtered_data[1][0],Filtered_data[1][1],Filtered_data[1][2]))
+    fp2 = np.concatenate((Filtered_data[2][0],Filtered_data[2][1],Filtered_data[2][2]))
+    
+    if show_ani == True:
+        affichage_simul(frames)
+    return Filtered_data, fp0, fp1, fp2
 
 
-# Calcul de l'énergie résiudelle pour tester l'efficacité du PML
-energie_initiale = np.sum(u0**2)  # Énergie initiale
-energie_finale = np.sum(u_n**2)  # Énergie finale
-
-pourcentage_residuel = 100 * energie_finale / energie_initiale  # pourcentage d'énergie restante dans le domaine
-
-print(f"Énergie résiduelle dans le domaine : {pourcentage_residuel:.6f} %")
 
 
+
+def affichage_simul(frames):
 # Affichage des capteurs
-capteurs_x = [cx1 * h, cx2 * h, cx3 * h]
-capteurs_y = [cy1 * h, cy2 * h, cy3 * h]
+    capteurs_x = [cx1 * h, cx2 * h, cx3 * h]
+    capteurs_y = [cy1 * h, cy2 * h, cy3 * h]
 
 # Animation
-fig, ax = plt.subplots(figsize=(7, 6))
-img = ax.imshow(
-    frames[0].T,
-    origin="lower",
-    cmap="seismic",
-    extent=[0, L, 0, L],
-    animated=True
-)
+    fig, ax = plt.subplots(figsize=(7, 6))
+    img = ax.imshow(
+        frames[0].T,
+        origin="lower",
+        cmap="seismic",
+        extent=[0, L, 0, L],
+        animated=True
+    )
 
-# Capteurs avec couleurs différentes
-scatter1 = ax.scatter(capteurs_x[0], capteurs_y[0], c="red", marker="o", s=80, label="C1")
-scatter2 = ax.scatter(capteurs_x[1], capteurs_y[1], c="blue", marker="o", s=80, label="C2")
-scatter3 = ax.scatter(capteurs_x[2], capteurs_y[2], c="green", marker="o", s=80, label="C3")
+    # Capteurs avec couleurs différentes
+    scatter1 = ax.scatter(capteurs_x[0], capteurs_y[0], c="red", marker="o", s=80, label="C1")
+    scatter2 = ax.scatter(capteurs_x[1], capteurs_y[1], c="blue", marker="o", s=80, label="C2")
+    scatter3 = ax.scatter(capteurs_x[2], capteurs_y[2], c="green", marker="o", s=80, label="C3")
 
 # Red box around dx=190:210, dy=190:210
-rect = patches.Rectangle(
-    (190*h, 190*h),        # (x, y) bottom-left corner
-    width=20*h,          # 210 - 190
-    height=20*h,         # 210 - 190
-    linewidth=2,
-    edgecolor="red",
-    facecolor="none",
-    animated=True# transparent fill
-)
-ax.add_patch(rect)
-ax.legend()
-plt.colorbar(img, ax=ax, label="Amplitude")
-ax.set_xlabel("x [m]")
-ax.set_ylabel("y [m]")
+    rect = patches.Rectangle(
+        (positionbat[0][0]*h, positionbat[1][0]*h),        # (x, y) bottom-left corner
+        width=(positionbat[0][1]-positionbat[0][0])*h,          # 210 - 190
+        height=(positionbat[1][1]-positionbat[1][0])*h,         # 210 - 190
+        linewidth=1,
+        edgecolor="brown",
+        facecolor="none",
+        animated=True# transparent fill
+    )
+    ax.add_patch(rect)
+    ax.legend()
+    plt.colorbar(img, ax=ax, label="Amplitude")
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
 
-def maj(k):
-    img.set_array(frames[k].T)
-    return [img, scatter1, scatter2, scatter3, rect]  # add rect here
-print(f"Axis limits: x={ax.get_xlim()},  y={ax.get_ylim()}")
-ani = FuncAnimation(fig, maj, frames=len(frames), interval=20, blit=True)
-plt.show()
+    def maj(k):
+        img.set_array(frames[k].T)
+        return [img, scatter1, scatter2, scatter3, rect]  # add rect here
+    print(f"Axis limits: x={ax.get_xlim()},  y={ax.get_ylim()}")
+    ani = FuncAnimation(fig, maj, frames=len(frames), interval=20, blit=True)
+    plt.show()
 
-p11, p12, p13 = p1_hist[:2753], p1_hist[2754:5507], p1_hist[5508:-1]
-p21, p22, p23 = p2_hist[:2753], p2_hist[2754:5507], p2_hist[5508:-1]
-p31, p32, p33 = p3_hist[:2753], p3_hist[2754:5507], p3_hist[5508:-1]
-c333 = [c13,c23,c33] 
-Filtered_data = [[p11-c11, p12-c12, p13-c13], 
-                 [p21-c21, p22-c22, p23-c23], 
-                 [p31-c31, p32-c32, p33-c33]]
-fp = []
-j = 0
-for n in Filtered_data:
-    fp.append([])
-    for i in n:
-        for v in i:
-            fp[j].append(v)
-    j += 1
-        
+    
+
 def graph_capteur(show):
     if show == True:
-        calc_dist(Filtered_data, cx123, cy123, C123)
+        
         plt.figure(figsize=(8,5))
-        plt.plot(t_hist[:-3], fp[0], label="Capteur 1")
-        plt.plot(t_hist[:-3], fp[1], label="Capteur 2")
-        plt.plot(t_hist[:-3], fp[2], label="Capteur 3")
+        plt.plot(t_hist[:], apply_threshold(np.abs(fp0)), label="Capteur 1")
+        plt.plot(t_hist[:], apply_threshold(np.abs(fp1)), label="Capteur 2")
+        plt.plot(t_hist[:], apply_threshold(np.abs(fp2)), label="Capteur 3")
+
         plt.xlabel("Temps [s]")
         plt.ylabel("Amplitude")
         plt.title("Signaux enregistrés par les capteurs")
         plt.legend()
         plt.grid()
         plt.show()
-
+##calc_sigma_test(Filtered_data, cx123, cy123, C123)
+#optimisation_filtre(cx123, cy123, C123)
 show_PML = False
 show_pml(show_PML)
-show_capteurs = True
+show_capteurs = False
 graph_capteur(show_capteurs)
 
+
+
+def graph_sigmae():
+    sigmas = [55.38, 55.75, 55.52, 52.35, 56.58, 60.44, 55.73, 54.10, 50.23, 46.84,
+          39.88, 18.96, 20.97, 22.06, 12.77, 18.46, 12.50, 21.50, 14.23, 24.49,
+          25.87, 26.69, 27.96, 31.09, 32.84, 35.08, 40.63, 44.95, 50.38, 56.25,
+          59.38, 64.34, 68.55, 73.08, 77.73, 82.31, 87.10, 88.13, 89.46, 94.31,
+          93.91, 96.75, 98.18, 98.50, 101.98, 106.61, 109.17, 115.06, 116.99, 121.11,
+          126.49, 128.24, 130.81, 136.33, 137.62, 140.12, 145.50, 147.83, 150.10, 152.71,
+          157.79, 160.44, 165.08, 166.83, 170.35, 173.21, 176.30, 178.52, 180.81]
+
+    errors = [13.05, 10.89, 9.35, 8.06, 6.90, 5.86, 5.19, 4.79, 4.31, 3.82,
+          3.36, 2.56, 2.18, 1.78, 0.53, 0.43, 0.43, 0.35, 0.35, 0.23,
+          0.16, 0.10, 0.06, 0.06, 0.08, 0.11, 0.13, 0.12, 0.13, 0.15,
+          0.15, 0.14, 0.15, 0.14, 0.15, 0.14, 0.15, 0.13, 0.13, 0.13,
+          0.13, 0.12, 0.11, 0.13, 0.14, 0.16, 0.20, 0.21, 0.24, 0.25,
+          0.28, 0.30, 0.32, 0.33, 0.35, 0.36, 0.38, 0.39, 0.39, 0.40,
+          0.40, 0.39, 0.38, 0.37, 0.36, 0.35, 0.34, 0.32, 0.30]
+
+    rths = [9.48, 10.51, 11.66, 12.92, 14.28, 15.70, 17.16, 18.67, 20.20, 21.76,
+        23.33, 24.91, 26.51, 28.12, 29.73, 31.35, 32.97, 34.60, 36.23, 37.87,
+        39.51, 41.15, 42.79, 44.43, 46.08, 47.73, 49.38, 51.03, 52.68, 54.33,
+        55.98, 57.64, 59.29, 60.95, 62.60, 64.26, 65.92, 67.57, 69.23, 70.89,
+        72.55, 74.21, 75.87, 77.53, 79.19, 80.85, 82.51, 84.17, 85.83, 87.49,
+        89.15, 90.82, 92.48, 94.14, 95.80, 97.46, 99.13, 100.79, 102.45, 104.11,
+        105.78, 107.44, 109.10, 110.77, 112.43, 114.09, 115.76, 117.42, 119.09]
+
+
+
+
+
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(sigmas, errors, marker='o', markersize=3)
+    plt.xlabel("Distance [m]")
+    plt.ylabel("Meilleur sigma")
+    plt.title("Sigma optimal vs distance")
+    plt.grid()
+    plt.show()
+
+graph_sigmae()
 
 
