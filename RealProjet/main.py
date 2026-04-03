@@ -84,6 +84,21 @@ def conditions_frontieres(u):
     u[:, -1] = 0
     return u
 
+def couleurs_capteurs(nb_capteurs):
+    """Retourne des couleurs bien distinctes pour les capteurs."""
+    couleurs_fixes = [
+        "red",
+        "blue",
+        "lime",
+        "magenta",
+        "orange",
+        "cyan",
+        "yellow",
+        "white",
+        "black",
+        "purple",
+    ]
+    return couleurs_fixes[:nb_capteurs]
 
 def afficher_pml(gamma, L):
     """Affichage du PML"""
@@ -95,6 +110,11 @@ def afficher_pml(gamma, L):
     plt.ylabel("y [m]")
     plt.tight_layout()
     plt.show()
+
+
+def creer_capteurs_depuis_pulses(pulses):
+    """Crée un capteur à la position de chaque pulse."""
+    return [(x0, y0) for x0, y0, _ in pulses]
 
 
 def afficher_waveform_source(t_total, dt, pulses, f_source=400, A0_source=5e7, tau_source=0.001):
@@ -118,9 +138,13 @@ def afficher_waveform_source(t_total, dt, pulses, f_source=400, A0_source=5e7, t
     plt.show()
 
 
-def animer_resultats(frames, L, interval=30):
-    """Animation du champ de pression."""
+def animer_resultats(frames, capteurs, L, interval=30):
+    """Animation du champ de pression avec capteurs colorés et numérotés."""
     fig, ax = plt.subplots(figsize=(7, 6))
+
+    nx, ny = frames[0].shape
+    hx = L / nx
+    hy = L / ny
 
     img = ax.imshow(
         frames[0].T,
@@ -133,6 +157,16 @@ def animer_resultats(frames, L, interval=30):
     ax.set_xlabel("x [m]")
     ax.set_ylabel("y [m]")
 
+    couleurs = couleurs_capteurs(len(capteurs))
+
+    for i, ((xc, yc), couleur) in enumerate(zip(capteurs, couleurs)):
+        x_m = (xc + 0.5) * hx
+        y_m = (yc + 0.5) * hy
+
+        ax.scatter(x_m, y_m, color=couleur, s=50, marker="o")
+        ax.text(x_m, y_m, str(i + 1), color=couleur, fontsize=10,
+                ha="left", va="bottom", weight="bold")
+
     def maj(k):
         img.set_array(frames[k].T)
         return [img]
@@ -142,6 +176,22 @@ def animer_resultats(frames, L, interval=30):
     plt.show()
     return ani
 
+def afficher_signaux_capteurs(temps, signaux_capteurs):
+    """Affiche tous les signaux des capteurs sur un seul graphe."""
+    plt.figure(figsize=(10, 5))
+
+    couleurs = couleurs_capteurs(len(signaux_capteurs))
+
+    for i, (signal, couleur) in enumerate(zip(signaux_capteurs, couleurs)):
+        plt.plot(temps, signal, color=couleur, label=f"Capteur {i+1}")
+
+    plt.title("Pression aux capteurs")
+    plt.xlabel("Temps [s]")
+    plt.ylabel("Pression")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
 def run_simul(
     L=100,
@@ -165,9 +215,10 @@ def run_simul(
     afficher_pml_flag=True,
     afficher_waveform_flag=True,
     afficher_animation=True,
+    afficher_capteurs_flag=True,
     seed=None,
 ):
-    """Lance une simul, peu être aléatoire."""
+    """Lance une simul, peut être aléatoire."""
     if seed is not None:
         random.seed(seed)
 
@@ -186,7 +237,7 @@ def run_simul(
 
     epaisseur_pml = int(epaisseur_pml_ratio * nx)
     gamma = creer_pml(nx, ny, epaisseur_pml, puissance_pml, gamma_max)
-    
+
     if afficher_pml_flag:
         afficher_pml(gamma, L)
 
@@ -199,7 +250,10 @@ def run_simul(
         dt_pulse=dt_pulse,
     )
 
+    capteurs = creer_capteurs_depuis_pulses(pulses)
+
     print("Pulses :", pulses)
+    print("Capteurs :", capteurs)
 
     if afficher_waveform_flag:
         afficher_waveform_source(
@@ -217,6 +271,9 @@ def run_simul(
 
     frames = [u_n.copy()]
     energie_max = 0.0
+
+    temps = np.arange(nt) * dt
+    signaux_capteurs = [np.zeros(nt) for _ in capteurs]
 
     for n in range(nt):
         t_n = n * dt
@@ -241,6 +298,9 @@ def run_simul(
 
         u_np1 = conditions_frontieres(u_np1)
 
+        for i, (xc, yc) in enumerate(capteurs):
+            signaux_capteurs[i][n] = u_np1[xc, yc]
+
         energie_courante = np.sum(u_np1**2)
         energie_max = max(energie_max, energie_courante)
 
@@ -259,14 +319,20 @@ def run_simul(
         pourcentage_residuel = None
         print("Impossible de calculer le pourcentage résiduel : énergie maximale nulle.")
 
+    if afficher_capteurs_flag:
+        afficher_signaux_capteurs(temps, signaux_capteurs)
+
     if afficher_animation:
-        animer_resultats(frames, L)
+        animer_resultats(frames, capteurs, L)
 
     return {
         "u_final": u_n.copy(),
         "frames": frames,
         "gamma": gamma,
         "pulses": pulses,
+        "capteurs": capteurs,
+        "temps": temps,
+        "signaux_capteurs": signaux_capteurs,
         "c": c,
         "h": h,
         "dt": dt,
@@ -276,10 +342,11 @@ def run_simul(
         "pourcentage_residuel": pourcentage_residuel,
     }
 
+
 # Paramètres 
 
 L = 100
-t_total = 0.08
+t_total = 0.1
 nx = 300
 ny = 300
 
@@ -287,18 +354,18 @@ rho = 1000
 kappa = 2.2e9
 cfl = 0.95
 
-epaisseur_pml_ratio = 0.2
+epaisseur_pml_ratio = 0.15
 puissance_pml = 2
-gamma_max = 20000
+gamma_max = 1000
 
-nb_pulses = 1
+nb_pulses = 5
 t_depart_pulses = 0.01
-dt_pulse = 0.03
+dt_pulse = 0.005
 
 sigma_source = 1
-f_source = 400
-A0_source = 5e6
-tau_source = 0.003
+f_source = 600
+A0_source = 8e6
+tau_source = 0.002
 
 nb_frames = 100
 seed = None
