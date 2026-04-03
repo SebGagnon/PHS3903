@@ -1,172 +1,331 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+import random
 
-## Constantes ##
-L = 100  # Longueur d'un côté du domaine [m]
-t = 0.3  # temps total de simulation [s]
-nx = 200  # nombre de points en x
-ny = 200 # nombre de points en y
-h = L / nx  # distance entre les points spatiaux [m]
 
-rho = 1000  # densite volumique [kg/m3]
-kappa = 2.2e9  # bulk modulus [Pa]
-c = np.sqrt(kappa / rho)  # vitesse du son dans l'eau [m/s]
-
-alpha = {5: 3.24e-5,   # dictionnaire des coefficients alpha selon la fréquence [Np/m]
-         10: 8.94e-5,
-         15: 1.78e-4,
-         20: 2.91e-4,
-         25: 4.21e-4,
-         30: 5.60e-4}
-
-gamma_dict = {key: value * c for key, value in alpha.items()}  # dictionnaire des constantes d'atténuation selon la fréquence [s^-1]
-
-## Pas de temps ##
-dt_max = h / (c * np.sqrt(2))  # pas de temps maximal pour respecter la condition CFL en 2D
-dt = 0.95 * dt_max  # pas de temps choisi avec une marge de sécurité
-nt = int(t / dt)  # nombre de points temporels
-
-print(f"vitesse de l'onde = {c:.2f} m/s")
-print(f"distance entre les points = {h:.4f} m")
-print(f"durée totale de la simul = {dt:.2e} s")
-print(f"nt = {nt}")
-
-## conditions aux frontières ##
-c1, c2, c3 = 0, 0, 0 
-d1, d2, d3 = 0, 0, 0  
-e1, e2, e3 = 0, 0, 0  
-f1, f2, f3 = 0, 0, 0  
-
-def PML(nx, ny, epaisseur, puissance, gamma_max):
-    grille = np.zeros((nx, ny))  # grille de gamma initialisée à 0 dans tout le domaine
-    lignes, cols = np.indices((nx, ny))  # matrices contenant les indices de chaque point
-    dist = np.minimum.reduce([lignes, cols, nx - 1 - lignes, ny - 1 - cols])  # matrice des distances par rapport aux bords
-    mask = dist < epaisseur  # sélectionne les éléments appartenant à la couche absorbante
-    s = (epaisseur - dist[mask]) / epaisseur  # distance normalisée au bord entre 0 et 1
-    grille[mask] = gamma_max * s**puissance  # profil progressif de gamma dans la couche absorbante
-
+def creer_pml(nx, ny, epaisseur, puissance, gamma_max):
+    """Création du PML."""
+    grille = np.zeros((nx, ny))
+    lignes, cols = np.indices((nx, ny))
+    dist = np.minimum.reduce([lignes, cols, nx - 1 - lignes, ny - 1 - cols])
+    mask = dist < epaisseur
+    s = (epaisseur - dist[mask]) / epaisseur
+    grille[mask] = gamma_max * s**puissance
     return grille
 
-def grille_vers_vecteur(grille):  # prend une grille 2D et retourne un vecteur en partant du bas à gauche
-    return np.flipud(grille).flatten()
 
-def vecteur_vers_grille(vecteur, nx, ny):  # prend un vecteur et reconstruit la grille 2D correspondante
-    return np.flipud(vecteur.reshape(nx, ny))
+def creer_pulses_aleatoires(nb_pulses, nx, ny, epaisseur_pml, t_depart=0.01, dt_pulse=0.02):
+    """Crée une liste de pulses aléatoires pas dans le PML."""
+    pulses = []
+    marge = epaisseur_pml + 2
 
-def pulse_gaussien_module(nx, ny, x0=None, y0=None, sigma=10, w=0.4, A0=1):
-    if x0 is None:
-        x0 = nx // 2
-    if y0 is None:
-        y0 = ny // 2
+    for k in range(nb_pulses):
+        x0 = random.randint(marge, nx - marge - 1)
+        y0 = random.randint(marge, ny - marge - 1)
+        t0 = t_depart + k * dt_pulse
+        pulses.append((x0, y0, t0))
 
-    x, y = np.meshgrid(np.arange(nx), np.arange(ny), indexing='ij')  
-    r = np.sqrt((x - x0)**2 + (y - y0)**2)  # distance par rapport au point source
+    return pulses
 
-    pulse = A0 * np.exp(-(r**2) / (2 * sigma**2)) * np.cos(w * r)  # modulation en fonction de r
-    return pulse
 
-def source_temporelle_gaussienne(nx, ny, t, x0=None, y0=None, sigma=10, w=2*np.pi*5000, A0=1):
-    if x0 is None:
-        x0 = nx // 2
-    if y0 is None:
-        y0 = ny // 2
+def source_sonar_multi(nx, ny, t, pulse_data, sigma=1, f=400, A0=5e7, tau=0.001):
+    """Source totale en fonction du nombre et de la position des pulses."""
+    x, y = np.meshgrid(np.arange(nx), np.arange(ny), indexing="ij")
+    source = np.zeros((nx, ny))
 
-    x, y = np.meshgrid(np.arange(nx), np.arange(ny), indexing='ij')
-    r2 = (x - x0)**2 + (y - y0)**2
+    for x0, y0, t0 in pulse_data:
+        r2 = (x - x0) ** 2 + (y - y0) ** 2
+        enveloppe_spatiale = np.exp(-r2 / (2 * sigma**2))
+        enveloppe_temporelle = np.exp(-((t - t0) ** 2) / (2 * tau**2))
+        source += A0 * enveloppe_spatiale * enveloppe_temporelle * np.sin(2 * np.pi * f * (t - t0))
 
-    source = A0 * np.exp(-r2 / (2 * sigma**2)) * np.cos(w * t)
     return source
 
-# Conditions initiales
-u0 = pulse_gaussien_module(nx, ny, sigma=10, w=0.5, A0=1.0)  # pulse initial
-u_nm1 = u0.copy()  # champ au temps n-1
-u_n = u0.copy()  # champ au temps n
-u_np1 = np.zeros((nx, ny))  # champ au temps n+1
 
-# PML
-epaisseur_pml = int(0.3*nx)  # épaisseur 
-gamma_max = 20000  # valeur maximale de gamma sur les bords finaux
-gamma = PML(nx, ny, epaisseur_pml, puissance=3, gamma_max=gamma_max)  
+def waveform_source(temps, pulses, f_source=400, A0_source=5e7, tau_source=0.001):
+    """Fonction pour l'affichage dans le temps du signal envoyé."""
+    signal = np.zeros_like(temps)
 
-# Plot du PML initial
-plt.figure(figsize=(6, 5))
-plt.imshow(gamma.T, origin="lower", cmap="inferno")
-plt.colorbar(label=r"$\gamma(x,y)$")
-plt.title("Couche absorbante")
-plt.xlabel("x")
-plt.ylabel("y")
-plt.tight_layout()
-plt.show()
+    for _, _, t0 in pulses:
+        enveloppe_temporelle = np.exp(-((temps - t0) ** 2) / (2 * tau_source**2))
+        signal += A0_source * enveloppe_temporelle * np.sin(2 * np.pi * f_source * (temps - t0))
 
-frames = [u_n.copy()]  # liste des images conservées pour l'animation
-pas_sauvegarde = max(1, nt // 1500)  # intervalle entre deux sauvegardes d'image
+    return signal
 
-# Loop
-for n in range(nt):
-    t_n = n * dt  # temps courant
 
-    lap = np.zeros_like(u_n)  # initialisation du laplacien
+def laplacien_9_points(u, h):
+    """Calcul du Laplacien."""
+    lap = np.zeros_like(u)
     lap[1:-1, 1:-1] = (
-        4 * (
-            u_n[2:, 1:-1] + u_n[:-2, 1:-1]
-            + u_n[1:-1, 2:] + u_n[1:-1, :-2]
+        4
+        * (
+            u[2:, 1:-1]
+            + u[:-2, 1:-1]
+            + u[1:-1, 2:]
+            + u[1:-1, :-2]
         )
         + (
-            u_n[2:, 2:] + u_n[2:, :-2]
-            + u_n[:-2, 2:] + u_n[:-2, :-2]
+            u[2:, 2:]
+            + u[2:, :-2]
+            + u[:-2, 2:]
+            + u[:-2, :-2]
         )
-        - 20 * u_n[1:-1, 1:-1]
-    ) / (6 * h**2)  # laplacien à 9 points
+        - 20 * u[1:-1, 1:-1]
+    ) / (6 * h**2)
+    return lap
 
-    a = gamma * dt / 2  # coefficient local d'amortissement
 
-    # source gaussienne modulée dans le temps
-    source = source_temporelle_gaussienne(nx, ny, t_n, sigma=10, w=2*np.pi*5000, A0=1.0)
+def conditions_frontieres(u):
+    """Conditions frontières de Dirichlet."""
+    u[0, :] = 0
+    u[-1, :] = 0
+    u[:, 0] = 0
+    u[:, -1] = 0
+    return u
 
-    u_np1[1:-1, 1:-1] = (
-        2 * u_n[1:-1, 1:-1]
-        - (1 - a[1:-1, 1:-1]) * u_nm1[1:-1, 1:-1]
-        + c**2 * dt**2 * lap[1:-1, 1:-1]
-        + dt**2 * source[1:-1, 1:-1]
-    ) / (1 + a[1:-1, 1:-1])  # mise à jour explicite
 
-    ## Frontières
-    u_np1[0, :] = 0    # bord gauche
-    u_np1[-1, :] = 0   # bord droit
-    u_np1[:, 0] = 0    # bord bas
-    u_np1[:, -1] = 0   # bord haut
+def afficher_pml(gamma, L):
+    """Affichage du PML"""
+    plt.figure(figsize=(6, 5))
+    plt.imshow(gamma.T, origin="lower", cmap="inferno", extent=[0, L, 0, L])
+    plt.colorbar(label=r"$\gamma(x,y)$")
+    plt.title("Couche absorbante")
+    plt.xlabel("x [m]")
+    plt.ylabel("y [m]")
+    plt.tight_layout()
+    plt.show()
 
-    if n % pas_sauvegarde == 0:
-        frames.append(u_n.copy())  # sauvegarde du champ pour l'animation
 
-    u_nm1[:, :] = u_n   # n devient n-1
-    u_n[:, :] = u_np1   # n+1 devient n
+def afficher_waveform_source(t_total, dt, pulses, f_source=400, A0_source=5e7, tau_source=0.001):
+    """Affichage de la source, (amplitude dans le temps de tous les pulses)."""
+    temps = np.arange(0, t_total, dt)
+    signal = waveform_source(
+        temps,
+        pulses,
+        f_source=f_source,
+        A0_source=A0_source,
+        tau_source=tau_source
+    )
+
+    plt.figure(figsize=(8, 4))
+    plt.plot(temps, signal)
+    plt.title("Waveform envoyé")
+    plt.xlabel("Temps [s]")
+    plt.ylabel("Amplitude")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+def animer_resultats(frames, L, interval=30):
+    """Animation du champ de pression."""
+    fig, ax = plt.subplots(figsize=(7, 6))
+
+    img = ax.imshow(
+        frames[0].T,
+        origin="lower",
+        cmap="seismic",
+        extent=[0, L, 0, L]
+    )
+    plt.colorbar(img, ax=ax, label="Amplitude")
+    ax.set_title("Champ de pression")
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+
+    def maj(k):
+        img.set_array(frames[k].T)
+        return [img]
+
+    ani = FuncAnimation(fig, maj, frames=len(frames), interval=interval, blit=False)
+    plt.tight_layout()
+    plt.show()
+    return ani
+
+
+def run_simul(
+    L=100,
+    t_total=0.2,
+    nx=500,
+    ny=500,
+    rho=1000,
+    kappa=2.2e9,
+    cfl=0.95,
+    epaisseur_pml_ratio=0.3,
+    puissance_pml=3,
+    gamma_max=20000,
+    nb_pulses=5,
+    t_depart_pulses=0.01,
+    dt_pulse=0.03,
+    sigma_source=1,
+    f_source=400,
+    A0_source=5e7,
+    tau_source=0.001,
+    nb_frames=300,
+    afficher_pml_flag=True,
+    afficher_waveform_flag=True,
+    afficher_animation=True,
+    seed=None,
+):
+    """Lance une simul, peu être aléatoire."""
+    if seed is not None:
+        random.seed(seed)
+
+    h = L / nx
+    c = np.sqrt(kappa / rho)
+
+    dt_max = h / (c * np.sqrt(2))
+    dt = cfl * dt_max
+    nt = int(t_total / dt)
+    pas_sauvegarde = max(1, nt // nb_frames)
+
+    print(f"vitesse de l'onde = {c:.2f} m/s")
+    print(f"distance entre les points = {h:.4f} m")
+    print(f"Pas de temps = {dt:.2e} s")
+    print(f"nt = {nt}")
+
+    epaisseur_pml = int(epaisseur_pml_ratio * nx)
+    gamma = creer_pml(nx, ny, epaisseur_pml, puissance_pml, gamma_max)
     
-# Calcul de l'énergie résiduelle pour tester l'efficacité du PML
-energie_initiale = np.sum(u0**2)  # Énergie initiale
-energie_finale = np.sum(u_n**2)  # Énergie finale
+    if afficher_pml_flag:
+        afficher_pml(gamma, L)
 
-pourcentage_residuel = 100 * energie_finale / energie_initiale  # pourcentage d'énergie restante dans le domaine
+    pulses = creer_pulses_aleatoires(
+        nb_pulses=nb_pulses,
+        nx=nx,
+        ny=ny,
+        epaisseur_pml=epaisseur_pml,
+        t_depart=t_depart_pulses,
+        dt_pulse=dt_pulse,
+    )
 
-print(f"Énergie résiduelle dans le domaine : {pourcentage_residuel:.6f} %")
+    print("Pulses :", pulses)
 
-# Animation
-fig, ax = plt.subplots(figsize=(7, 6))
-img = ax.imshow(
-    frames[0].T,
-    origin="lower",
-    cmap="seismic",
-    extent=[0, L, 0, L],
-    animated=False
+    if afficher_waveform_flag:
+        afficher_waveform_source(
+            t_total=t_total,
+            dt=dt,
+            pulses=pulses,
+            f_source=f_source,
+            A0_source=A0_source,
+            tau_source=tau_source,
+        )
+
+    u_nm1 = np.zeros((nx, ny))
+    u_n = np.zeros((nx, ny))
+    u_np1 = np.zeros((nx, ny))
+
+    frames = [u_n.copy()]
+    energie_max = 0.0
+
+    for n in range(nt):
+        t_n = n * dt
+
+        lap = laplacien_9_points(u_n, h)
+        a = gamma * dt / 2
+
+        source = source_sonar_multi(
+            nx, ny, t_n, pulses,
+            sigma=sigma_source,
+            f=f_source,
+            A0=A0_source,
+            tau=tau_source
+        )
+
+        u_np1[1:-1, 1:-1] = (
+            2 * u_n[1:-1, 1:-1]
+            - (1 - a[1:-1, 1:-1]) * u_nm1[1:-1, 1:-1]
+            + c**2 * dt**2 * lap[1:-1, 1:-1]
+            + dt**2 * source[1:-1, 1:-1]
+        ) / (1 + a[1:-1, 1:-1])
+
+        u_np1 = conditions_frontieres(u_np1)
+
+        energie_courante = np.sum(u_np1**2)
+        energie_max = max(energie_max, energie_courante)
+
+        if n % pas_sauvegarde == 0:
+            frames.append(u_np1.copy())
+
+        u_nm1[:, :] = u_n
+        u_n[:, :] = u_np1
+
+    energie_finale = np.sum(u_n**2)
+
+    if energie_max > 0:
+        pourcentage_residuel = 100 * energie_finale / energie_max
+        print(f"Énergie résiduelle dans le domaine : {pourcentage_residuel:.6f} %")
+    else:
+        pourcentage_residuel = None
+        print("Impossible de calculer le pourcentage résiduel : énergie maximale nulle.")
+
+    if afficher_animation:
+        animer_resultats(frames, L)
+
+    return {
+        "u_final": u_n.copy(),
+        "frames": frames,
+        "gamma": gamma,
+        "pulses": pulses,
+        "c": c,
+        "h": h,
+        "dt": dt,
+        "nt": nt,
+        "energie_max": energie_max,
+        "energie_finale": energie_finale,
+        "pourcentage_residuel": pourcentage_residuel,
+    }
+
+# Paramètres 
+
+L = 100
+t_total = 0.08
+nx = 300
+ny = 300
+
+rho = 1000
+kappa = 2.2e9
+cfl = 0.95
+
+epaisseur_pml_ratio = 0.2
+puissance_pml = 2
+gamma_max = 20000
+
+nb_pulses = 1
+t_depart_pulses = 0.01
+dt_pulse = 0.03
+
+sigma_source = 1
+f_source = 400
+A0_source = 5e6
+tau_source = 0.003
+
+nb_frames = 100
+seed = None
+
+# Simul
+
+resultats = run_simul(
+    L=L,
+    t_total=t_total,
+    nx=nx,
+    ny=ny,
+    rho=rho,
+    kappa=kappa,
+    cfl=cfl,
+    epaisseur_pml_ratio=epaisseur_pml_ratio,
+    puissance_pml=puissance_pml,
+    gamma_max=gamma_max,
+    nb_pulses=nb_pulses,
+    t_depart_pulses=t_depart_pulses,
+    dt_pulse=dt_pulse,
+    sigma_source=sigma_source,
+    f_source=f_source,
+    A0_source=A0_source,
+    tau_source=tau_source,
+    nb_frames=nb_frames,
+    afficher_pml_flag=True,
+    afficher_waveform_flag=True,
+    afficher_animation=True,
+    seed=seed,
 )
-plt.colorbar(img, ax=ax, label="Amplitude")
-ax.set_xlabel("x [m]")
-ax.set_ylabel("y [m]")
-
-def maj(k):
-    img.set_array(frames[k].T)
-    return [img]
-
-ani = FuncAnimation(fig, maj, frames=len(frames), interval=1, blit=False)
-plt.show()
