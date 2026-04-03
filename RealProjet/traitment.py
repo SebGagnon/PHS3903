@@ -6,17 +6,20 @@ from scipy import signal
 import matplotlib.patches as patches
 from scipy.signal import hilbert
 from scipy.ndimage import gaussian_filter1d
+import math
 
 ## Constantes ##
 L = 400  # Longueur d'un côté du domaine [m]
 t = 1.2  # temps total de simulation [s]
-nx = 1200  # nombre de points en x
-ny = 1200  # nombre de points en y
+nx = 600  # nombre de points en x
+ny = 600  # nombre de points en y
 h = L / nx  # distance entre les points spatiaux [m]
-positionbat = [[360,410], [290,310]]
+positionbat = [[260,310], [290,310]]
 Rho_eau = 1000  # densite volumique [kg/m3]
 Kappa_eau = 2.2e9  # bulk modulus [Pa]
 Gamma_eau = 0
+vx_bat = 11 #m/s
+vy_bat = 5 #m/s
 
 Rho_acier = 7850
 Kappa_acier = 1.6e11
@@ -166,7 +169,7 @@ def corr_delay(s1, s2, threshold=0.0003,
 def calc_sigma_test(Filtered_data, cx123, cy123, C123):
     error=0
     gerror=0    
-    for sigma in [30,60,90,120,150,180,210,240,270, 300, 330, 360, 390,420]:
+    for sigma in [30,60,90,120,150]:
         gerror = 0
         for i in range(3):
             rth = np.sqrt(
@@ -307,10 +310,17 @@ def pulse_canvas():
     for n in range(nt):
         lap_c = np.zeros_like(u_n_c)
         lap_c[1:-1, 1:-1] = (
+        4 * (
             u_n_c[2:, 1:-1] + u_n_c[:-2, 1:-1]
             + u_n_c[1:-1, 2:] + u_n_c[1:-1, :-2]
-            - 4 * u_n_c[1:-1, 1:-1]
-        ) / h**2
+        )
+        + (
+            u_n_c[2:, 2:] + u_n_c[2:, :-2]
+            + u_n_c[:-2, 2:] + u_n_c[:-2, :-2]
+        )
+        - 20 * u_n_c[1:-1, 1:-1]
+        ) / (6 * h**2)
+ 
 
         a_c = gamma * dt / 2
 
@@ -345,13 +355,14 @@ def pulse_canvas():
     clist = [[c11,c12,c13],[c21,c22,c23],[c31,c32,c33]]
     C123 = [c11, c22, c33]
     return C123, clist 
-C123, clist = 0, 0#pulse_canvas()
+C123, clist = pulse_canvas()
 
 
-def simulation(positionbat = positionbat, clist = clist, show_ani = False):
+def simulation(positionbat = positionbat, clist = clist, vx_bat = 0, vy_bat = 0, show_ani = False):
+    vx_bateau = vx_bat/h
+    vy_bateau = vy_bat/h
     
-    C_grid =  c_eau * np.ones((nx-2, ny-2), dtype=float); C_grid[positionbat[0][0]:positionbat[0][1], positionbat[1][0]:positionbat[1][1]] = c_max
-# buffers capteurs
+    # buffers capteurs
     u0 = np.zeros((nx, ny)) 
     u_nm1 = u0.copy()  # champ au temps n-1
     u_n = u0.copy()  # champ au temps n
@@ -375,13 +386,22 @@ def simulation(positionbat = positionbat, clist = clist, show_ani = False):
     temps = 0
 # Loop
     for n in range(nt):
+        x_fact = math.floor(n*dt*vx_bateau)
+        y_fact = math.floor(n*dt*vy_bateau)
+        C_grid =  c_eau * np.ones((nx-2, ny-2), dtype=float); C_grid[positionbat[0][0]+x_fact:positionbat[0][1]+x_fact, positionbat[1][0]+y_fact:positionbat[1][1]+y_fact] = c_max
 
         lap = np.zeros_like(u_n)  # initialisation du laplacien
         lap[1:-1, 1:-1] = (
+        4 * (
             u_n[2:, 1:-1] + u_n[:-2, 1:-1]
             + u_n[1:-1, 2:] + u_n[1:-1, :-2]
-            - 4 * u_n[1:-1, 1:-1]
-        ) / h**2  # calcul du laplacien par différences centrées
+        )
+        + (
+            u_n[2:, 2:] + u_n[2:, :-2]
+            + u_n[:-2, 2:] + u_n[:-2, :-2]
+        )
+        - 20 * u_n[1:-1, 1:-1]
+        ) / (6 * h**2)   # calcul du laplacien par différences centrées
 
         a = gamma * dt / 2  # coefficient local d'amortissement
 
@@ -497,7 +517,9 @@ def graph_capteur(show):
         plt.legend()
         plt.grid()
         plt.show()
-##calc_sigma_test(Filtered_data, cx123, cy123, C123)
+
+simulation(positionbat, vx_bat = vx_bat, vy_bat = vy_bat, clist = clist, show_ani = True )
+calc_sigma_test(Filtered_data, cx123, cy123, C123)
 #optimisation_filtre(cx123, cy123, C123)
 show_PML = False
 show_pml(show_PML)
@@ -537,13 +559,13 @@ def graph_sigmae():
 
 
     plt.figure(figsize=(8, 5))
-    plt.plot(sigmas, errors, marker='o', markersize=3)
+    plt.plot(rths, errors, marker='o', markersize=3)
     plt.xlabel("Distance [m]")
-    plt.ylabel("Meilleur sigma")
+    plt.ylabel("Erreur")
     plt.title("Sigma optimal vs distance")
     plt.grid()
     plt.show()
 
-graph_sigmae()
+#graph_sigmae()
 
 
