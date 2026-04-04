@@ -364,31 +364,48 @@ seed = None
 
 #Simul
 
+testPML = {}
+liste_epaisseur = np.arange(0.01,0.45,0.03)
+liste_gamma = np.arange(100,50000,500)
+compteur = 0
 
+for i in liste_epaisseur :
 
-resultats = run_simul(
-    L=L,
-    t_total=t_total,
-    nx=nx,
-    ny=ny,
-    rho=rho,
-    kappa=kappa,
-    cfl=cfl,
-    epaisseur_pml_ratio=epaisseur_pml_ratio,
-    puissance_pml=puissance_pml,
-    gamma_max=gamma_max,
-    nb_pulses=nb_pulses,
-    t_depart_pulses=t_depart_pulses,
-    dt_pulse=dt_pulse,
-    sigma_source=sigma_source,
-    f_source=f_source,
-    A0_source=A0_source,
-    tau_source=tau_source,
-    nb_frames=nb_frames,
-    afficher_pml_flag=True,
-    afficher_waveform_flag=True,
-    afficher_animation=True,
-    afficher_capteurs_flag=True,
-    seed=seed,
-)
+    for j in liste_gamma :
+        
+        resultats = run_simul(
+            L=L,
+            t_total=t_total,
+            nx=nx,
+            ny=ny,
+            rho=rho,
+            kappa=kappa,
+            cfl=cfl,
+            epaisseur_pml_ratio=i,
+            puissance_pml=puissance_pml,
+            gamma_max=j,
+            nb_pulses=nb_pulses,
+            t_depart_pulses=t_depart_pulses,
+            dt_pulse=dt_pulse,
+            sigma_source=sigma_source,
+            f_source=f_source,
+            A0_source=A0_source,
+            tau_source=tau_source,
+            nb_frames=nb_frames,
+            afficher_pml_flag=False,
+            afficher_waveform_flag=False,
+            afficher_animation=False,
+            afficher_capteurs_flag=False,
+            seed=seed,
+        )
 
+        testPML[(i,j)]=resultats['pourcentage_residuel']
+        print(f"epaisseur {i:.2f}, gamma {j:.2f} , Energie residuelle {resultats['pourcentage_residuel']:.4f}")
+        compteur += 1
+
+        if compteur % 20 == 0 :
+            with open("testPML.pkl", "wb") as f:
+                pickle.dump(testPML, f)
+
+with open("testPML.pkl", "wb") as f:
+                pickle.dump(testPML, f)
