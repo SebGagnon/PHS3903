@@ -7,19 +7,19 @@ import matplotlib.patches as patches
 from scipy.signal import hilbert
 from scipy.ndimage import gaussian_filter1d
 import math
-
+from mpl_toolkits.mplot3d import Axes3D
 ## Constantes ##
 L = 400  # Longueur d'un côté du domaine [m]
 t = 1.2  # temps total de simulation [s]
 nx = 600  # nombre de points en x
 ny = 600  # nombre de points en y
 h = L / nx  # distance entre les points spatiaux [m]
-positionbat = [[260,310], [290,310]]
+positionbat = [[300,320], [410,430]]
 Rho_eau = 1000  # densite volumique [kg/m3]
 Kappa_eau = 2.2e9  # bulk modulus [Pa]
 Gamma_eau = 0
-vx_bat = 11 #m/s
-vy_bat = 5 #m/s
+vx_bat = 0 #m/s
+vy_bat = 0 #m/s
 
 Rho_acier = 7850
 Kappa_acier = 1.6e11
@@ -51,8 +51,8 @@ print(f"nt = {nt}")
 
 # Positions des capteurs
 sensor1_pos = (75, 75)
-sensor2_pos = (100, 75)
-sensor3_pos = (75, 100)
+sensor2_pos = (200, 75)
+sensor3_pos = (75, 200)
 t1 = 0
 t2 = 0.4
 t3 = 0.8
@@ -136,20 +136,12 @@ def show_pml(show_PML):
         plt.show()
 
 
-def apply_threshold(s, threshold=0.0006):
+def apply_threshold(s, threshold=0.005):
     s = s.copy()
     s[np.abs(s) < threshold ] = 0
     return s
-
-
 def gaussian_smooth(s, sigma=84):
     return gaussian_filter1d(s, sigma=sigma)
-
-def square_wave_filter(s, width=200):
-    kernel = np.ones(width)
-    return np.convolve(s, kernel, mode='same')
-
-
 def corr_delay(s1, s2, threshold=0.0003, 
                  smooth='gaussian', sigma = 84, width=200):
     s1 = apply_threshold(s1, threshold)
@@ -158,112 +150,96 @@ def corr_delay(s1, s2, threshold=0.0003,
     if smooth == 'gaussian':
         s1 = gaussian_smooth(s1, sigma=sigma)
         s2 = gaussian_smooth(s2, sigma=sigma)
-    elif smooth == 'square':
-        s1 = square_wave_filter(s1, width=width)
-        s2 = square_wave_filter(s2, width=width)
 
     lags = signal.correlation_lags(len(s1), len(s2), mode='full')
     r = lags[np.argmax(signal.correlate(s1, s2, mode='full'))]
     return r
 
-def calc_sigma_test(Filtered_data, cx123, cy123, C123):
-    error=0
-    gerror=0    
-    for sigma in [30,60,90,120,150]:
-        gerror = 0
-        for i in range(3):
-            rth = np.sqrt(
-                min(((cx123[i] - np.array(positionbat[0])) * L / nx)**2) +
-                min(((cy123[i] - np.array(positionbat[1])) * L / nx)**2))
-
-            grayon = np.abs(c_eau * dt / 2 * corr_delay(
-                np.abs(C123[i]), np.abs(Filtered_data[i][i]),
-                smooth='gaussian', sigma=sigma))
-            #if 100 * np.abs(grayon - rth) / (3 * rth) < 50:
-            gerror += 100 * np.abs(grayon - rth) / (3 * rth)
-        print(f"{grayon:2f}")    
-        print(f"sigma = {sigma} : {gerror:.2f}%") 
-    #return 84
-
 def calc_dist(Filtered_data, cx123, cy123, C123):
     error=0
     gerror=0
+    lrayon=[]
+    lerror=[]
+    nbr=[]
     for i in range(3):
+
         grayon = np.abs(c_eau * dt / 2 * corr_delay(
                 np.abs(C123[i]), np.abs(Filtered_data[i][i]),
-                smooth='gaussian', sigma=84))
-        grth = np.sqrt(
-                min(((cx123[i] - np.array(positionbat[0])) * L / nx)**2) +
-                min(((cy123[i] - np.array(positionbat[1])) * L / nx)**2))
-
-        rayon = np.abs(c_eau * dt / 2 * corr_delay(
-                np.abs(C123[i]), np.abs(Filtered_data[i][i]),
                 smooth='rien'))
-        rth = np.sqrt(
+        for nombre_de_fois in range(10):
+            if grayon>30:
+                rayon = 2*grayon-52
+            else:
+                rayon = 10
+            grayon = np.abs(c_eau * dt / 2 * corr_delay(
+                np.abs(C123[i]), np.abs(Filtered_data[i][i]),
+                smooth='gaussian', sigma=rayon))
+
+            rth = np.sqrt(
                 min(((cx123[i] - np.array(positionbat[0])) * L / nx)**2) +
-                min(((cy123[i] - np.array(positionbat[1])) * L / nx)**2))
-        gerror += 100 * np.abs(grayon - grth) / (3 * rth)
-        error += 100 * np.abs(rayon - rth) / (3 * rth)
+                min(((cy123[i] - np.array(positionbat[1])) * L / nx)**2))            
+            gerror = 100 * np.abs(grayon - rth) / (rth)
+            nbr.append(nombre_de_fois+1)
+            lerror.append(gerror) 
+        print(nbr)
+        print(f"{lerror}\n")
+        #print(grayon)
+        #print(f'{rth}\n')
+        lrayon.append(rayon)
+    print(f"{gerror:.2f}%\n")
+    return lrayon
 
-        print(grayon)
-        print(f'{grth}\n')
-        print(rayon)
-        print(f'{rth}\n')
-    print(f"{gerror}\n")
-    print(f"{error}\n")
-    #return 84
+def calc_error(sigma,Filtered_data,C123, rth):
+    rayon = np.abs(c_eau * dt / 2 * corr_delay(
+            np.abs(C123[0]), np.abs(Filtered_data[0][0]),
+            smooth='gaussian', sigma=sigma))
+    error = 100 * np.abs(rayon - rth) / (rth)
+    return error, rth
 
-def optimisation_filtre(cx123, cy123, C123):
+def optimisation_filtre(cx123, cy123, C123, clist) :
     lrayon = []
     sigs = []
     phi = (1 + np.sqrt(5)) / 2
-
-    for n in range(20):
-        print(f"{100*n/6:.2f}%")
-        positionbat = [[100+n*5, 110+n*5], [100, 110]]
-        Filtered_data, fp0, fp1, fp2 = simulation(positionbat=positionbat)
-
-        def calc_error(sigma):
-            error = 0
-            ath = 0
-            for i in range(3):
-                rayon = np.abs(c_eau * dt / 2 * corr_delay(
-                    np.abs(C123[i]), np.abs(Filtered_data[i][i]),
-                    smooth='gaussian', sigma=sigma))
-                rth = np.sqrt(
-                    min(((cx123[i] - np.array(positionbat[0])) * L / nx)**2) +
-                    min(((cy123[i] - np.array(positionbat[1])) * L / nx)**2))
-                error += 100 * np.abs(rayon - rth) / (3 * rth)
-                ath += rth / 3
-            return error, ath  # scalar error, average rth
-
-        # Reset interval for each boat position
-        a, b = 1, 600
-        c = b - (b - a) / phi
-        d = a + (b - a) / phi
-        perror = float('inf')
-        best_sigma = c
-
-        for iteration in range(80):
-            e_c, _ = calc_error(c)  # unpack tuple, ignore ath
-            e_d, _ = calc_error(d)
-
-            if e_c < e_d:           # now comparing scalars ✓
-                b = d
-                best_sigma = c
-                perror = min(perror, e_c)
-            else:
-                a = c
-                best_sigma = d
-                perror = min(perror, e_d)
-
+    y = 20
+    lry=[]
+    lrx=[]
+    for n in range(y):
+        for m in range(y): 
+            print(f"{100*n/y:.2f}%")
+            positionbat = [[130+n*15, 140+n*15], [130+m*15, 140+m*15]]
+            Filtered_data, fp0, fp1, fp2, t_hist = simulation(positionbat=positionbat,clist = clist, show_ani=False)
+            rx = np.sqrt(min(((cx123[0] - np.array(positionbat[0])) * L / nx)**2))
+            ry = np.sqrt(min(((cy123[0] - np.array(positionbat[1])) * L / nx)**2))
+            rth = np.sqrt(rx**2 + ry**2)
+            
+             # scalar error, average rth
+       # Reset interval for each boat position
+            a, b = 1, 600
             c = b - (b - a) / phi
             d = a + (b - a) / phi
+            perror = float('inf')
+            best_sigma = c
 
-        _, ath = calc_error(best_sigma)  # get ath at best sigma
-        print(f"best_sigma={best_sigma:.2f}  error={perror:.2f}%  rth={ath:.2f}m")
-        lrayon.append(ath)
-        sigs.append(best_sigma)
+            for iteration in range(60):
+                e_c, _ = calc_error(c, Filtered_data, C123, rth)  # unpack tuple, ignore ath
+                e_d, _ = calc_error(d, Filtered_data, C123, rth)
+
+                if e_c < e_d:           # now comparing scalars ✓
+                    b = d
+                    best_sigma = c
+                    perror = min(perror, e_c)
+                else:
+                    a = c
+                    best_sigma = d
+                    perror = min(perror, e_d)
+
+                c = b - (b - a) / phi
+                d = a + (b - a) / phi 
+            print(f"best_sigma={best_sigma:.2f}  error={perror:.2f}%  rth={ath:.2f}m")
+            lrayon.append(rth)
+            sigs.append(best_sigma)
+            lrx.append(rx)
+            lry.append(ry)
 
     plt.figure(figsize=(8, 5))
     plt.plot(lrayon, sigs, marker='o', markersize=3)
@@ -274,7 +250,7 @@ def optimisation_filtre(cx123, cy123, C123):
     plt.show()
     print(lrayon)
     print(sigs)
-    return sigs
+    return sigs, rx, 
 
 
 
@@ -355,10 +331,11 @@ def pulse_canvas():
     clist = [[c11,c12,c13],[c21,c22,c23],[c31,c32,c33]]
     C123 = [c11, c22, c33]
     return C123, clist 
+
 C123, clist = pulse_canvas()
 
 
-def simulation(positionbat = positionbat, clist = clist, vx_bat = 0, vy_bat = 0, show_ani = False):
+def simulation(positionbat = positionbat, clist = [], vx_bat = 0, vy_bat = 0, show_ani = False):
     vx_bateau = vx_bat/h
     vy_bateau = vy_bat/h
     
@@ -452,7 +429,7 @@ def simulation(positionbat = positionbat, clist = clist, vx_bat = 0, vy_bat = 0,
     
     if show_ani == True:
         affichage_simul(frames)
-    return Filtered_data, fp0, fp1, fp2
+    return Filtered_data, fp0, fp1, fp2, t_hist
 
 
 
@@ -503,14 +480,16 @@ def affichage_simul(frames):
 
     
 
-def graph_capteur(show):
+def graph_capteur(show, lrayon = [10,10,10], t_hist = []):
     if show == True:
         
         plt.figure(figsize=(8,5))
-        plt.plot(t_hist[:], apply_threshold(np.abs(fp0)), label="Capteur 1")
-        plt.plot(t_hist[:], apply_threshold(np.abs(fp1)), label="Capteur 2")
-        plt.plot(t_hist[:], apply_threshold(np.abs(fp2)), label="Capteur 3")
-
+        plt.plot(t_hist[:], (np.abs(fp0)), label="Capteur 1")
+        plt.plot(t_hist[:], (np.abs(fp1)), label="Capteur 2")
+        plt.plot(t_hist[:], (np.abs(fp2)), label="Capteur 3")
+        plt.plot(t_hist[:], gaussian_smooth(np.abs(fp0), sigma=lrayon[0]), label="G - Capteur 1")
+        plt.plot(t_hist[:], gaussian_smooth(np.abs(fp1), sigma=lrayon[1]), label="G - Capteur 2")
+        plt.plot(t_hist[:], gaussian_smooth(np.abs(fp2), sigma=lrayon[2]), label="G - Capteur 3")
         plt.xlabel("Temps [s]")
         plt.ylabel("Amplitude")
         plt.title("Signaux enregistrés par les capteurs")
@@ -518,32 +497,34 @@ def graph_capteur(show):
         plt.grid()
         plt.show()
 
-simulation(positionbat, vx_bat = vx_bat, vy_bat = vy_bat, clist = clist, show_ani = True )
-calc_sigma_test(Filtered_data, cx123, cy123, C123)
-#optimisation_filtre(cx123, cy123, C123)
-show_PML = False
-show_pml(show_PML)
-show_capteurs = False
-graph_capteur(show_capteurs)
+#Filtered_data, fp0, fp1, fp2, t_hist = simulation(positionbat, vx_bat = vx_bat, vy_bat = vy_bat, clist = clist, show_ani = True )
+#lrayon = calc_dist(Filtered_data, cx123, cy123, C123)
+#optimisation_filtre(cx123, cy123, C123, clist)
+#show_PML = False
+#show_pml(show_PML)
+show_capteurs = True
+#graph_capteur(show_capteurs, lrayon, t_hist)
 
 
 
 def graph_sigmae():
     sigmas = [55.38, 55.75, 55.52, 52.35, 56.58, 60.44, 55.73, 54.10, 50.23, 46.84,
-          39.88, 18.96, 20.97, 22.06, 12.77, 18.46, 12.50, 21.50, 14.23, 24.49,
-          25.87, 26.69, 27.96, 31.09, 32.84, 35.08, 40.63, 44.95, 50.38, 56.25,
-          59.38, 64.34, 68.55, 73.08, 77.73, 82.31, 87.10, 88.13, 89.46, 94.31,
-          93.91, 96.75, 98.18, 98.50, 101.98, 106.61, 109.17, 115.06, 116.99, 121.11,
-          126.49, 128.24, 130.81, 136.33, 137.62, 140.12, 145.50, 147.83, 150.10, 152.71,
-          157.79, 160.44, 165.08, 166.83, 170.35, 173.21, 176.30, 178.52, 180.81]
+        39.88, 18.96, 20.97, 22.06, 12.77, 18.46, 12.50, 21.50, 14.23, 24.49,
+        25.87, 26.69, 27.96, 31.09, 32.84, 35.08, 40.63, 44.95, 50.38, 56.25,
+        59.38, 64.34, 68.55, 73.08, 77.73, 82.31, 87.10, 88.13, 89.46, 94.31,
+        93.91, 96.75, 98.18, 98.50, 101.98, 106.61, 109.17, 115.06, 116.99, 121.11,
+        126.49, 128.24, 130.81, 136.33, 137.62, 140.12, 145.50, 147.83, 150.10, 152.71,
+        157.79, 160.44, 165.08, 166.83, 170.35, 173.21, 176.30, 178.52, 180.81, 126.77,
+        127.76, 137.89, 149.24, 160.57, 120.90, 135.26, 149.78, 158.62, 164.05]
 
     errors = [13.05, 10.89, 9.35, 8.06, 6.90, 5.86, 5.19, 4.79, 4.31, 3.82,
-          3.36, 2.56, 2.18, 1.78, 0.53, 0.43, 0.43, 0.35, 0.35, 0.23,
-          0.16, 0.10, 0.06, 0.06, 0.08, 0.11, 0.13, 0.12, 0.13, 0.15,
-          0.15, 0.14, 0.15, 0.14, 0.15, 0.14, 0.15, 0.13, 0.13, 0.13,
-          0.13, 0.12, 0.11, 0.13, 0.14, 0.16, 0.20, 0.21, 0.24, 0.25,
-          0.28, 0.30, 0.32, 0.33, 0.35, 0.36, 0.38, 0.39, 0.39, 0.40,
-          0.40, 0.39, 0.38, 0.37, 0.36, 0.35, 0.34, 0.32, 0.30]
+        3.36, 2.56, 2.18, 1.78, 0.53, 0.43, 0.43, 0.35, 0.35, 0.23,
+        0.16, 0.10, 0.06, 0.06, 0.08, 0.11, 0.13, 0.12, 0.13, 0.15,
+        0.15, 0.14, 0.15, 0.14, 0.15, 0.14, 0.15, 0.13, 0.13, 0.13,
+        0.13, 0.12, 0.11, 0.13, 0.14, 0.16, 0.20, 0.21, 0.24, 0.25,
+        0.28, 0.30, 0.32, 0.33, 0.35, 0.36, 0.38, 0.39, 0.39, 0.40,
+        0.40, 0.39, 0.38, 0.37, 0.36, 0.35, 0.34, 0.32, 0.30, 0.33,
+        0.32, 0.29, 0.24, 0.17, 0.02, 0.01, 0.01, 0.01, 0.01]
 
     rths = [9.48, 10.51, 11.66, 12.92, 14.28, 15.70, 17.16, 18.67, 20.20, 21.76,
         23.33, 24.91, 26.51, 28.12, 29.73, 31.35, 32.97, 34.60, 36.23, 37.87,
@@ -551,7 +532,8 @@ def graph_sigmae():
         55.98, 57.64, 59.29, 60.95, 62.60, 64.26, 65.92, 67.57, 69.23, 70.89,
         72.55, 74.21, 75.87, 77.53, 79.19, 80.85, 82.51, 84.17, 85.83, 87.49,
         89.15, 90.82, 92.48, 94.14, 95.80, 97.46, 99.13, 100.79, 102.45, 104.11,
-        105.78, 107.44, 109.10, 110.77, 112.43, 114.09, 115.76, 117.42, 119.09]
+        105.78, 107.44, 109.10, 110.77, 112.43, 114.09, 115.76, 117.42, 119.09,
+        189.31, 198.24, 207.55, 217.26, 227.33, 154.42, 162, 170.29,179.2, 188.62]
 
 
 
@@ -559,13 +541,13 @@ def graph_sigmae():
 
 
     plt.figure(figsize=(8, 5))
-    plt.plot(rths, errors, marker='o', markersize=3)
+    plt.plot(rths, sigmas, marker='o', markersize=3)
     plt.xlabel("Distance [m]")
     plt.ylabel("Erreur")
     plt.title("Sigma optimal vs distance")
     plt.grid()
     plt.show()
 
-#graph_sigmae()
+graph_sigmae()
 
 
