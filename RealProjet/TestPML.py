@@ -8,11 +8,11 @@ import pickle
 def creer_pml(nx, ny, epaisseur, puissance, gamma_max):
     """Création du PML."""
     grille = np.zeros((nx, ny))
-    lignes, cols = np.indices((nx, ny))
-    dist = np.minimum.reduce([lignes, cols, nx - 1 - lignes, ny - 1 - cols])
-    mask = dist < epaisseur
-    s = (epaisseur - dist[mask]) / epaisseur
-    grille[mask] = gamma_max * s**puissance
+    lignes, cols = np.indices((nx, ny)) # retourne 2 matrices avec les indices des lignes ou des colonnes comme element
+    dist = np.minimum.reduce([lignes, cols, nx - 1 - lignes, ny - 1 - cols])  # retourne une matrice du minimum de distance de chaque element par rapport au top,bas,droite ou gauche
+    mask = dist < epaisseur 
+    s = (epaisseur - dist[mask]) / epaisseur #matrice des distances par rapport au edges, seulement pour les points de l<epaisseur voulue
+    grille[mask] = gamma_max * s**puissance 
     return grille
 
 def creer_pulses_aleatoires(nb_pulses, nx, ny, epaisseur_pml, t_depart=0.01, dt_pulse=0.02):
@@ -348,7 +348,7 @@ cfl = 0.95
 
 epaisseur_pml_ratio = 0.2
 puissance_pml = 2
-gamma_max = 1000
+gamma_max = 5000
 
 nb_pulses = 5
 t_depart_pulses = 0.01
@@ -365,13 +365,13 @@ seed = None
 #Simul
 
 testPML = {}
-liste_epaisseur = np.arange(0.01,0.45,0.03)
-liste_gamma = np.arange(100,50000,500)
+liste_epaisseur = np.arange(0.05,0.4,0.05)
+liste_puissance = [1,2,3,4,5,6,7,8,9,10]
 compteur = 0
 
 for i in liste_epaisseur :
 
-    for j in liste_gamma :
+    for j in liste_puissance :
         
         resultats = run_simul(
             L=L,
@@ -382,8 +382,8 @@ for i in liste_epaisseur :
             kappa=kappa,
             cfl=cfl,
             epaisseur_pml_ratio=i,
-            puissance_pml=puissance_pml,
-            gamma_max=j,
+            puissance_pml=j,
+            gamma_max=gamma_max,
             nb_pulses=nb_pulses,
             t_depart_pulses=t_depart_pulses,
             dt_pulse=dt_pulse,
@@ -404,8 +404,8 @@ for i in liste_epaisseur :
         compteur += 1
 
         if compteur % 20 == 0 :
-            with open("testPML.pkl", "wb") as f:
+            with open("testPMLPuissance.pkl", "wb") as f:
                 pickle.dump(testPML, f)
 
-with open("testPML.pkl", "wb") as f:
+with open("testPMLPuissance.pkl", "wb") as f:
                 pickle.dump(testPML, f)

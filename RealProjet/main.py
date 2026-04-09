@@ -8,11 +8,11 @@ import pickle
 def creer_pml(nx, ny, epaisseur, puissance, gamma_max):
     """Création du PML."""
     grille = np.zeros((nx, ny))
-    lignes, cols = np.indices((nx, ny))
-    dist = np.minimum.reduce([lignes, cols, nx - 1 - lignes, ny - 1 - cols])
-    mask = dist < epaisseur
-    s = (epaisseur - dist[mask]) / epaisseur
-    grille[mask] = gamma_max * s**puissance
+    lignes, cols = np.indices((nx, ny)) #retourne 2 matrices avec les indices des lignes ou des colonnes comme element
+    dist = np.minimum.reduce([lignes, cols, nx - 1 - lignes, ny - 1 - cols]) #minimum de la distance pour chaque point pr aux 4 edges
+    mask = dist < epaisseur #check pour l'epaisseur voulue
+    s = (epaisseur - dist[mask]) / epaisseur # distance normalisée à 1 pour les points dans le PML
+    grille[mask] = gamma_max * s**puissance # pml complet, avec gamma max aux bords et qui decroit vers le centre selon une fonction polynomiale
     return grille
 
 def creer_pulses_aleatoires(nb_pulses, nx, ny, epaisseur_pml, t_depart=0.01, dt_pulse=0.02):
@@ -21,7 +21,7 @@ def creer_pulses_aleatoires(nb_pulses, nx, ny, epaisseur_pml, t_depart=0.01, dt_
     marge = epaisseur_pml + 2
 
     for k in range(nb_pulses):
-        x0 = random.randint(marge, nx - marge - 1)
+        x0 = random.randint(marge, nx - marge - 1) 
         y0 = random.randint(marge, ny - marge - 1)
         t0 = t_depart + k * dt_pulse
         pulses.append((x0, y0, t0))
@@ -337,8 +337,8 @@ def run_simul(
 
 # Paramètres 
 
-L = 75
-t_total = 0.085
+L = 50
+t_total = 0.05
 nx = 200
 ny = 200
 
@@ -348,14 +348,14 @@ cfl = 0.95
 
 epaisseur_pml_ratio = 0.2
 puissance_pml = 2
-gamma_max = 1000
+gamma_max = 3000
 
-nb_pulses = 5
+nb_pulses = 1
 t_depart_pulses = 0.01
 dt_pulse = 0.001
 
 sigma_source = 1
-f_source = 600
+f_source = 1111
 A0_source = 8e6
 tau_source = 0.002
 

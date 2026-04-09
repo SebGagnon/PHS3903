@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 
-with open("testPML.pkl", "rb") as f:
+with open("testPMLprecisGamma.pkl", "rb") as f:
     testPML = pickle.load(f)
 
 
@@ -25,9 +25,9 @@ im = plt.imshow(
     cmap='inferno'
 )
 
-plt.colorbar(im, label="Energie residuelle")
-plt.xlabel("gamma max")
-plt.ylabel("epaisseur PML")
+plt.colorbar(im, label="Energie résiduelle")
+plt.xlabel("Gamma maximal")
+plt.ylabel("Épaisseur PML")
 plt.tight_layout()
 plt.show()
 Z_log = np.where(Z <= 0, 1e-12, Z)
@@ -42,8 +42,8 @@ im = plt.imshow(
     cmap='inferno'
 )
 
-plt.colorbar(im, label="Energie residuelle (log)")
-plt.xlabel("gamma max")
-plt.ylabel("epaisseur PML")
+plt.colorbar(im, label="Energie résiduelle (échelle logarithmique")
+plt.xlabel("Gamma maximal")
+plt.ylabel("Épaisseur PML")
 plt.tight_layout()
 plt.show()
