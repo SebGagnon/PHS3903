@@ -8,10 +8,10 @@ from scipy.signal import hilbert
 # Le maillage de être au moins plus petit que la longueur d'onde sur 2
 
 ## Constantes ##
-L = 100  # Longueur d'un côté du domaine [m]
-t = 0.3  # temps total de simulation [s]
-nx = 100  # nombre de points en x
-ny = 100  # nombre de points en y
+L = 1000  # Longueur d'un côté du domaine [m]
+t = 4  # temps total de simulation [s]
+nx = 300  # nombre de points en x
+ny = 300  # nombre de points en y
 h = L / nx  # distance entre les points spatiaux [m]
 
 Rho_eau = 1000  # densite volumique [kg/m3]
@@ -39,13 +39,15 @@ dt_max = h / (c_max * np.sqrt(2))  # pas de temps maximal pour respecter la cond
 dt = 0.9 * dt_max  # pas de temps choisi avec une marge de sécurité
 nt = int(t / dt)  # nombre de points temporels
 
-# Temps des pulses (modifiable à un seul endroit)
-t0_1 = 0.0
-t0_2 = 0.1
-t0_3 = 0.2
-
-# Vecteur des temps
-t0_vect = np.array([t0_1, t0_2, t0_3])
+# Définition des pulses : (idx_capteur_emetteur, temps_emission)
+pulses_config = [
+    (0, 0.0),   # Capteur 1 émet à t=0.00s
+    (1, 0.8),   # Capteur 1 émet à t=0.80s
+    (2, 1.6),   # Capteur 2 émet à 
+    (0, 2.4),   # Capteur 3 émet à 
+    (1, 3.2),   # Capteur 3 émet à t=0.30s
+]
+t0_vect = np.array([p[1] for p in pulses_config])
 
 print(f"vitesse de l'onde maximale = {c_max:.2f} m/s")
 print(f"distance entre les points = {h:.4f} m")
@@ -74,7 +76,7 @@ def grille_vers_vecteur(grille):  # prend une grille 2D et retourne un vecteur e
 def vecteur_vers_grille(vecteur, nx, ny):  # prend un vecteur et reconstruit la grille 2D correspondante
     return np.flipud(vecteur.reshape(nx, ny))
 
-def pulse_gaussien_module(nx, ny, x0=None, y0=None, sigma= 10 , w = 0.4, A0= 1 ):
+def pulse_gaussien_module(nx, ny, x0=None, y0=None, sigma= 10 , w = 0.4, A0 = 1 ):
     if x0 is None:
         x0 = nx // 2
     if y0 is None:
@@ -85,6 +87,18 @@ def pulse_gaussien_module(nx, ny, x0=None, y0=None, sigma= 10 , w = 0.4, A0= 1 )
 
     pulse = A0 * np.exp(-(r**2) / (2 * sigma**2)) * np.cos(w * r)  # modulation en fonction de r
     return pulse
+
+def source_temporelle_gaussienne(nx, ny, t, x0=None, y0=None, sigma=10, w=2*np.pi*5000, A0 = 1):
+    if x0 is None:
+        x0 = nx // 2
+    if y0 is None:
+        y0 = ny // 2
+
+    x, y = np.meshgrid(np.arange(nx), np.arange(ny), indexing='ij')
+    r2 = (x - x0)**2 + (y - y0)**2
+
+    source = A0 * np.exp(-r2 / (2 * sigma**2)) * np.cos(w * t)
+    return source
 
 def show_pml(show_PML):
     if show_PML == True:
@@ -99,94 +113,97 @@ def show_pml(show_PML):
         plt.tight_layout()
         plt.show()
 
-def simulation_sonar(position_capteurs, position_bateau, taille_bateau, show_animation = True, show_capteurs=False):
+def simulation_sonar(position_capteurs, position_bateau, taille_bateau, pulses_config, vx_bat=0, vy_bat=0, show_animation = True, show_capteurs = False):
 
-    #Conditions initiales
-    C_grid =  c_eau * np.ones((nx-2, ny-2), dtype=float);  C_grid[ (position_bateau[0] - taille_bateau) : (position_bateau[0] + taille_bateau), (position_bateau[1] - taille_bateau) : (position_bateau[1] + taille_bateau)] = c_max
-    #u0 = pulse_gaussien_module(nx, ny, x0 = 225, y0 = 150)  #pulse
-    u0 = np.zeros((nx, ny)) 
-    u_nm1 = u0.copy()  # champ au temps n-1
-    u_n = u0.copy()  # champ au temps n
-    u_np1 = np.zeros((nx, ny))  # champ au temps n+1
+    vx_noeuds = vx_bat / h
+    vy_noeuds = vy_bat / h
 
+    u0    = np.zeros((nx, ny))
+    u_nm1 = u0.copy()
+    u_n   = u0.copy()
+    u_np1 = np.zeros((nx, ny))
 
-    pulses = [
-        {"pos": sensor1_pos, "t0": t0_1},
-        {"pos": sensor2_pos, "t0": t0_2},
-        {"pos": sensor3_pos, "t0": t0_3},
-    ]
+    cx1, cy1 = position_capteurs[0]
+    cx2, cy2 = position_capteurs[1]
+    cx3, cy3 = position_capteurs[2]
 
-    cx1, cy1 = sensor1_pos
-    cx2, cy2 = sensor2_pos
-    cx3, cy3 = sensor3_pos
-    frames = []  # liste des images conservées pour l'animation
-    pas_sauvegarde = max(1, nt // 120)  # intervalle entre deux sauvegardes d'image
+    frames          = []
+    frames_pos_bateau = []
+    pas_sauvegarde  = max(1, nt // 120)
 
-
-
-    # buffers capteurs
-    steps = nt
+    steps  = nt
     t_hist  = np.zeros(steps)
     p1_hist = np.zeros(steps)
     p2_hist = np.zeros(steps)
     p3_hist = np.zeros(steps)
 
+    # Construction des indices de pulse
     pulse_indices = []
-
-    for p in pulses:
+    for idx_emetteur, t0 in pulses_config:
         pulse_indices.append({
-            "pos": p["pos"],
-            "n0": int(p["t0"] / dt)
+            "pos": position_capteurs[idx_emetteur],
+            "n0" : int(t0 / dt),
+            "idx_emetteur": idx_emetteur
         })
 
-    temps = 0
-    # Loop
     for n in range(nt):
 
-        lap = np.zeros_like(u_n)  # initialisation du laplacien
-        lap[1:-1, 1:-1] = (
-            u_n[2:, 1:-1] + u_n[:-2, 1:-1]
-            + u_n[1:-1, 2:] + u_n[1:-1, :-2]
-            - 4 * u_n[1:-1, 1:-1]
-        ) / h**2  # calcul du laplacien par différences centrées
+        # --- Position du bateau à l'instant n (en noeuds) ---
+        dx = int(np.floor(n * dt * vx_noeuds))
+        dy = int(np.floor(n * dt * vy_noeuds))
 
-        a = gamma * dt / 2  # coefficient local d'amortissement
+        x_bat = position_bateau[0] + dx
+        y_bat = position_bateau[1] + dy
+
+        # Grille de vitesse mise à jour à chaque pas
+        C_grid = c_eau * np.ones((nx-2, ny-2), dtype=float)
+        C_grid[x_bat - taille_bateau : x_bat + taille_bateau,
+               y_bat - taille_bateau : y_bat + taille_bateau] = c_max
+
+        lap = np.zeros_like(u_n)
+        lap[1:-1, 1:-1] = (
+            4 * (
+                u_n[2:, 1:-1] + u_n[:-2, 1:-1]
+                + u_n[1:-1, 2:] + u_n[1:-1, :-2]
+            )
+            + (
+                u_n[2:, 2:] + u_n[2:, :-2]
+                + u_n[:-2, 2:] + u_n[:-2, :-2]
+            )
+            - 20 * u_n[1:-1, 1:-1]
+        ) / (6 * h**2)
+
+        a = gamma * dt / 2
 
         u_np1[1:-1, 1:-1] = (
             2 * u_n[1:-1, 1:-1]
             - (1 - a[1:-1, 1:-1]) * u_nm1[1:-1, 1:-1]
             + C_grid**2 * dt**2 * lap[1:-1, 1:-1]
-        ) / (1 + a[1:-1, 1:-1])  # mise à jour explicite de l'équation d'onde amortie
+        ) / (1 + a[1:-1, 1:-1])
 
-        # Détection des pulses
         for pulse in pulse_indices:
             if n == pulse["n0"]:
                 sx, sy = pulse["pos"]
-                array_pulse = pulse_gaussien_module(nx, ny, x0 = sx, y0 = sy)
-
-                u_n = u_n + array_pulse
+                array_pulse = pulse_gaussien_module(nx, ny, x0=sx, y0=sy)
+                u_n   = u_n   + array_pulse
                 u_np1 = u_np1 + array_pulse
 
+        u_np1[0, :]  = 0
+        u_np1[-1, :] = 0
+        u_np1[:, 0]  = 0
+        u_np1[:, -1] = 0
 
-        ## Frontières
-        u_np1[0, :] = 0  # bord gauche
-        u_np1[-1, :] = 0  # bord droit
-        u_np1[:, 0] = 0  # bord bas
-        u_np1[:, -1] = 0  # bord haut
-
-
-        # Enregistrement capteurs
-        t_hist[n]  = n*dt
+        t_hist[n]  = n * dt
         p1_hist[n] = u_n[cx1, cy1]
         p2_hist[n] = u_n[cx2, cy2]
         p3_hist[n] = u_n[cx3, cy3]
 
         if n % pas_sauvegarde == 0:
-            frames.append(u_n.copy())  # sauvegarde du champ pour l'animation
+            frames.append(u_n.copy())
+            frames_pos_bateau.append((x_bat, y_bat))  # ← ajout
 
-        u_nm1[:, :] = u_n  #  n devient n-1
-        u_n[:, :] = u_np1  # n+1 devient n
-        temps = temps = dt
+        u_nm1[:, :] = u_n
+        u_n[:, :]   = u_np1
 
     intensité_capteurs = np.array([p1_hist, p2_hist, p3_hist])
     # Calcul de l'énergie résiudelle pour tester l'efficacité du PML
@@ -195,42 +212,13 @@ def simulation_sonar(position_capteurs, position_bateau, taille_bateau, show_ani
 
     # pourcentage_residuel = 100 * energie_finale / energie_initiale  # pourcentage d'énergie restante dans le domaine
 
-    # print(f"Énergie résiduelle dans le domaine : {pourcentage_residuel:.6f} %")
+    # print(f"Énergie résiduelle dans le domaine : {pourcentage_residuel:.6f} %")à
 
-
-    # Affichage des capteurs
-    capteurs_x = [cx1 * h, cx2 * h, cx3 * h]
-    capteurs_y = [cy1 * h, cy2 * h, cy3 * h]
-    if show_animation == True :
-        # Animation
-        fig, ax = plt.subplots(figsize=(7, 6))
-        img = ax.imshow(
-            frames[0].T,
-            origin="lower",
-            cmap="seismic",
-            extent=[0, L, 0, L],
-            animated=True
-        )
-
-        # Capteurs avec couleurs différentes
-        scatter1 = ax.scatter(capteurs_x[0], capteurs_y[0], c="red", marker="o", s=80, label="C1")
-        scatter2 = ax.scatter(capteurs_x[1], capteurs_y[1], c="blue", marker="o", s=80, label="C2")
-        scatter3 = ax.scatter(capteurs_x[2], capteurs_y[2], c="green", marker="o", s=80, label="C3")
-
-        ax.legend()
-        plt.colorbar(img, ax=ax, label="Amplitude")
-        ax.set_xlabel("x [m]")
-        ax.set_ylabel("y [m]")
-
-        def maj(k):
-            img.set_array(frames[k].T)
-            
-            return [img, scatter1, scatter2, scatter3]
-
-        ani = FuncAnimation(fig, maj, frames=len(frames), interval=40, blit=True)
-        plt.show()
+    if show_animation:
+        afficher_animation(frames, frames_pos_bateau, taille_bateau, position_capteurs, L, h)
 
     if show_capteurs == True:
+        
         plt.figure(figsize=(8,5))
         plt.plot(t_hist, p1_hist, label="Capteur 1")
         plt.plot(t_hist, p2_hist, label="Capteur 2")
@@ -241,155 +229,306 @@ def simulation_sonar(position_capteurs, position_bateau, taille_bateau, show_ani
         plt.legend()
         plt.grid()
         plt.show()
-        
+    
+
     return intensité_capteurs, t_hist
 
-def max_signaux(intensite_capteurs, t_hist):
-    """
-    intensite_capteurs : array [N_capteurs, N_samples]
-    """
+def afficher_animation(frames, frames_pos_bateau, taille_bateau, position_capteurs, L, h=h):
 
-    temps_max = []
-    amplitudes_max = []
+    capteurs_x = [pos[0] * h for pos in position_capteurs]  
+    capteurs_y = [pos[1] * h for pos in position_capteurs]  
 
-    for signal in intensite_capteurs:
-        idx = np.argmax(signal)
-        temps_max.append(t_hist[idx])
-        amplitudes_max.append(signal[idx])
+    fig, ax = plt.subplots(figsize=(7, 6))
 
-    return np.array(temps_max), np.array(amplitudes_max)
-
-def max_enveloppe_ordre(signal, t_hist, ordre, seuil_ratio=0.10, dt_min=t/8, seuil_montee=0.5):
-    """
-    ordre : numéro du pic (1,2,3...)
-    seuil_ratio : seuil amplitude relatif
-    dt_min : temps minimal entre deux pics (en secondes)
-    """
-
-    dt = t_hist[1] - t_hist[0]
-
-    # 🔹 Enveloppe
-    enveloppe = np.abs(hilbert(signal))
-
-    # 🔹 Seuil amplitude
-    seuil = seuil_ratio * np.max(enveloppe)
-
-    # 🔹 Seuil temporel → converti en indices
-    distance_min = int(dt_min / dt)
-
-    # 🔹 Détection des pics 
-    peaks, _ = find_peaks(
-        enveloppe,
-        height=seuil,
-        distance=distance_min,
-        prominence=seuil * 0.5
-    )
-
-    # 🔹 Sécurité
-    if len(peaks) < ordre:
-        return None, None, enveloppe
+    img = ax.imshow(
+        frames[0].T,
+        origin="lower",
+        cmap="seismic",
+        extent=[0, L, 0, L],
+        animated=True,)
     
-    idx_pic = peaks[ordre - 1]
-    amp_pic = enveloppe[idx_pic]
+    plt.colorbar(img, ax=ax, label="Amplitude")
+
+    # --- Capteurs ---
+    couleurs_capteurs = ["red", "blue", "green"]
+    for i, (cx, cy) in enumerate(zip(capteurs_x, capteurs_y)):
+        ax.scatter(cx, cy, color=couleurs_capteurs[i], marker="^", s=80, zorder=5, label=f"C{i+1}")
+
+    # --- Bateau (rectangle dynamique) ---
+    x_bat0, y_bat0 = frames_pos_bateau[0]
+    taille_m = taille_bateau * h
+
+    bateau_rect = plt.Rectangle(
+        (y_bat0 * h - taille_m, x_bat0 * h - taille_m),  # coin bas-gauche
+        2 * taille_m, 2 * taille_m,
+        linewidth=2, edgecolor="black", facecolor="brown", alpha=0.7,
+        animated=True, label="Bateau"
+    )
+    ax.add_patch(bateau_rect)
+
+    # --- Trajectoire ---
+    traj_x = [pos[1] * h for pos in frames_pos_bateau]
+    traj_y = [pos[0] * h for pos in frames_pos_bateau]
+    traj_line, = ax.plot([], [], color="black", linestyle="--", linewidth=1, alpha=0.5, label="Trajectoire")
+
+    ax.set_xlim(0, L)
+    ax.set_ylim(0, L)
+    ax.set_xlabel("y [m]")
+    ax.set_ylabel("x [m]")
+    ax.set_aspect("equal")
+    ax.legend(loc="upper right", fontsize=8)
+
+    def maj(k):
+        # Champ
+        img.set_array(frames[k].T)
+
+        # Position bateau
+        x_bat, y_bat = frames_pos_bateau[k]
+        bateau_rect.set_xy((y_bat * h - taille_m, x_bat * h - taille_m))
+
+        # Trajectoire jusqu'à maintenant
+        traj_line.set_data(traj_x[:k+1], traj_y[:k+1])
+
+        # Titre avec le temps
+        ax.set_title(f"t = {k * (t / len(frames)):.3f} s")
+
+        return [img, bateau_rect, traj_line]
+
+    ani = FuncAnimation(fig, maj, frames=len(frames), interval=40, blit=True)
+    plt.tight_layout()
+    plt.show()
+
+def get_plages_pulses(pulses_config, t_total):
+
+    # Si c'est un array simple de temps (ancien format)
+    if np.ndim(pulses_config[0]) == 0:
+        t0_list = list(pulses_config)
+        plages  = []
+        for i, t0 in enumerate(t0_list):
+            t_debut = t0
+            t_fin   = t0_list[i + 1] if i + 1 < len(t0_list) else t_total
+            plages.append((i, t_debut, t_fin))  # idx_emit = i par défaut
+        return plages
+
+    # Si c'est une liste de tuples (idx_emit, t0) — nouveau format
+    t0_list = [p[1] for p in pulses_config]
+    plages  = []
+    for i, (idx_emit, t0) in enumerate(pulses_config):
+        t_debut = t0
+        t_fin   = t0_list[i + 1] if i + 1 < len(pulses_config) else t_total
+        plages.append((idx_emit, t_debut, t_fin))
+    return plages
+
+def max_enveloppe_plage(signal, t_hist, t_debut_plage, t_fin_plage, seuil_montee= 0.4):
+    """
+    Trouve le maximum de l'enveloppe dans une plage temporelle donnée,
+    puis remonte au début du front montant.
+
+    t_debut_plage : temps de début de la plage [s] (= t0 du pulse émis)
+    t_fin_plage   : temps de fin de la plage [s]  (= t0 du prochain pulse, ou t_fin si dernier)
+    seuil_montee  : fraction du pic pour définir le début du front montant
+    """
+
+    # --- Sélection des indices dans la plage ---
+    mask = (t_hist >= t_debut_plage) & (t_hist < t_fin_plage)
+
+    if not np.any(mask):
+        return None, None, np.abs(hilbert(signal))
+
+    signal_plage = signal[mask]
+    t_hist_plage = t_hist[mask]
+
+    # --- Enveloppe sur la plage ---
+    enveloppe_plage = np.abs(hilbert(signal_plage))
+
+    # --- Maximum dans la plage ---
+    idx_pic_local = np.argmax(enveloppe_plage)
+    amp_pic       = enveloppe_plage[idx_pic_local]
 
     # --- Remontée vers le début du front montant ---
-    seuil_debut = seuil_montee * amp_pic  # ex: 10% de l'amplitude du pic
-
-    # On remonte depuis le pic jusqu'à ce que l'enveloppe tombe sous le seuil
-    idx_debut = idx_pic
-    while idx_debut > 0 and enveloppe[idx_debut] > seuil_debut:
+    seuil_debut = seuil_montee * amp_pic
+    idx_debut   = idx_pic_local
+    while idx_debut > 0 and enveloppe_plage[idx_debut] > seuil_debut:
         idx_debut -= 1
 
-    t_debut = t_hist[idx_debut]
-    amp_debut = enveloppe[idx_debut]
+    t_debut  = t_hist_plage[idx_debut]
+    amp_debut = enveloppe_plage[idx_debut]
 
-    return t_debut, amp_debut, enveloppe
+    # Enveloppe complète pour l'affichage
+    enveloppe_full = np.abs(hilbert(signal))
 
-def show_echo(intensité_echo, t_hist, Echo=False):
-    if Echo:
-        plt.figure(figsize=(8,5))
+    return t_debut, amp_debut, enveloppe_full
 
-        couleurs = ["red", "blue", "green"]
-        labels = ["Capteur 1", "Capteur 2", "Capteur 3"]
+def show_echo(intensité_echo, t_hist, pulses_config, Echo=True):
+    """
+    Affiche les échos par plage temporelle (un sous-graphique par pulse).
+    """
+    if not Echo:
+        return
+
+    plages        = get_plages_pulses(pulses_config, t)
+    n_pulses      = len(plages)
+    couleurs      = ["red", "blue", "green"]
+    labels        = ["Capteur 1", "Capteur 2", "Capteur 3"]
+
+    fig, axes = plt.subplots(n_pulses, 1, figsize=(10, 4 * n_pulses), sharex=False)
+
+    # Si un seul pulse, axes n'est pas une liste
+    if n_pulses == 1:
+        axes = [axes]
+
+    for k, (idx_emit, t_debut, t_fin) in enumerate(plages):
+        ax = axes[k]
+
+        # Masque temporel pour la plage
+        mask = (t_hist >= t_debut) & (t_hist < t_fin)
 
         for i, signal in enumerate(intensité_echo):
 
-            ordre = i + 1  
+            # Signal complet sur la plage
+            ax.plot(t_hist[mask], signal[mask],
+                    color=couleurs[i], alpha=0.4)
 
-            t_max, amp_max, enveloppe = max_enveloppe_ordre(signal, t_hist, ordre)
-
-            # signal + enveloppe
-            plt.plot(t_hist, signal, color=couleurs[i], alpha=0.4)
-            plt.plot(t_hist, enveloppe, color=couleurs[i], linestyle="--", label=labels[i])
+            # Enveloppe + pic sur la plage
+            t_max, amp_max, enveloppe_full = max_enveloppe_plage(
+                signal, t_hist, t_debut, t_fin
+            )
+            ax.plot(t_hist[mask], enveloppe_full[mask],
+                    color=couleurs[i], linestyle="--", label=labels[i])
 
             if t_max is not None:
-                plt.scatter(t_max, amp_max, color=couleurs[i], s=80)
-                plt.axvline(t_max, color=couleurs[i], linestyle=":")
+                ax.scatter(t_max, amp_max, color=couleurs[i], s=80, zorder=5)
+                ax.axvline(t_max, color=couleurs[i], linestyle=":", alpha=0.7)
 
-        plt.xlabel("Temps [s]")
-        plt.ylabel("Amplitude")
-        plt.title("Échos avec pics ordonnés par capteur")
-        plt.legend()
-        plt.grid()
-        plt.show()
+        # Ligne d'émission du pulse
+        ax.axvline(t_debut, color="black", linestyle="-", linewidth=1.5,
+                   label=f"Émission C{idx_emit+1} (t={t_debut:.2f}s)")
 
-def multilateration(intensite_capteurs, t_hist, position_capteurs, c_eau):
+        ax.set_xlim(t_debut, t_fin)
+        ax.set_xlabel("Temps [s]")
+        ax.set_ylabel("Amplitude")
+        ax.set_title(f"Pulse {k+1} — Émetteur C{idx_emit+1} | [{t_debut:.2f}s, {t_fin:.2f}s]")
+        ax.legend(loc="upper right", fontsize=8)
+        ax.grid(True, alpha=0.4)
 
-    intensite_capteurs = np.array(intensite_capteurs)
-    position_capteurs = np.array(position_capteurs) 
+    plt.suptitle("Échos par plage de pulse", fontsize=13)
+    plt.tight_layout()
+    plt.show()
 
+def multilateration_un_pulse(intensite_echos, t_hist, position_capteurs, c_eau, idx_emetteur=0, t_debut_plage=None, t_fin_plage=None):
+
+    intensite_echos          = np.array(intensite_echos)
+    position_capteurs_noeuds = np.array(position_capteurs)
+    n_capteurs               = len(position_capteurs)
+
+    # -------- DETECTION DES TEMPS D'ECHO --------
     temps_echo = []
-
-    # -------- DETECTION DES TEMPS --------
-    for i, signal in enumerate(intensite_capteurs):
-        ordre = i + 1
-        t_max, amp_max, enveloppe = max_enveloppe_ordre(signal, t_hist, ordre)
+    for i, signal in enumerate(intensite_echos):
+        if t_debut_plage is not None and t_fin_plage is not None:
+            t_max, amp_max, enveloppe = max_enveloppe_plage(signal, t_hist, t_debut_plage, t_fin_plage)
 
         if t_max is None:
-            raise ValueError(f"Pas assez de pics pour capteur {i+1}")
-
+            raise ValueError(f"Pas de pic détecté pour capteur {i+1}")
         temps_echo.append(t_max)
 
     temps_echo = np.array(temps_echo)
 
-    # -------- DISTANCES en noeuds --------
-    distances = c_eau * (temps_echo - t0_vect) / 2 / h
+    # t0 du pulse émis
+    t0_emit = t_debut_plage if t_debut_plage is not None else 0.0
 
-    # -------- RÉSIDUS : différence entre distance réelle et rayon du cercle --------
+    # -------- DISTANCES (toujours indexées 0,1,2 = capteurs) --------
+    # Émetteur : aller-retour
+    d_emetteur = c_eau * (temps_echo[idx_emetteur] - t0_emit) / 2 / h
+
+    # Récepteurs : trajet total - aller
+    indices_recepteurs = [i for i in range(n_capteurs) if i != idx_emetteur]
+    d_recepteurs = {
+        i: c_eau * (temps_echo[i] - t0_emit) / h - d_emetteur
+        for i in indices_recepteurs
+    }
+
+    # Assemblage distances indexées par capteur (toujours taille n_capteurs)
+    distances = np.zeros(n_capteurs)
+    distances[idx_emetteur] = d_emetteur
+    for i in indices_recepteurs:
+        distances[i] = d_recepteurs[i]
+
+    # -------- RÉSIDUS --------
     def residuals(x):
-        return [
-            np.linalg.norm(x - position_capteurs[i]) - distances[i]
-            for i in range(len(distances))
-        ]
+        res = [np.linalg.norm(x - position_capteurs_noeuds[idx_emetteur]) - d_emetteur]
+        for i in indices_recepteurs:
+            res.append(np.linalg.norm(x - position_capteurs_noeuds[i]) - d_recepteurs[i])
+        return res
 
-    # -------- ESTIMATION INITIALE en mètres --------
-    x0 = np.mean(position_capteurs, axis = 0)
-
-    # -------- OPTIMISATION --------
+    x0  = np.mean(position_capteurs_noeuds, axis=0)
     sol = least_squares(residuals, x0)
-    position_estimee = sol.x  # en mètres
 
-    return position_estimee, temps_echo
+    return sol.x, temps_echo, distances, idx_emetteur  # ← on retourne aussi idx_emetteur
 
-def plot_localisation_echo(position_capteurs, position_estimee, position_reelle, t0_vect, temps_echo, c_eau, taille_bateau, L=100, h=h):
+def calc_position_reelle_impact(position_reelle, t0_emit, d_emetteur, vx_bat, vy_bat, h, c_eau):
+    t_aller  = d_emetteur * h / c_eau   # temps aller [s]
+    t_impact = t0_emit + t_aller
+
+    dx_impact = vx_bat * t_impact  # [m]
+    dy_impact = vy_bat * t_impact  # [m]
+
+    position_impact_m = np.array(position_reelle) * h + np.array([dx_impact, dy_impact])
+
+    return position_impact_m, t_impact
+
+def plot_localisation_echo(position_capteurs, position_estimee, position_reelle, distances, taille_bateau, t0_emit, d_emetteur, vx_bat, vy_bat, L=L, h=h):
+    """
+    position_reelle : position initiale du bateau [noeuds]
+    t0_emit         : temps d'émission du pulse [s]
+    d_emetteur      : distance émetteur → bateau [noeuds]
+    vx_bat, vy_bat  : vitesses du bateau [m/s]
+    """
 
     fig, ax = plt.subplots(figsize=(8, 8))
-    n_capteurs = position_capteurs.shape[0]
+    n_capteurs      = position_capteurs.shape[0]
     couleurs_capteurs = ["red", "blue", "green"]
 
-    # --- Conversion maillage → mètres ---
-    capteurs_m = position_capteurs * h          # shape [N, 2]
-    estimee_m  = np.array(position_estimee) * h
-    reelle_m   = np.array(position_reelle)  * h
+    # --- Temps d'impact : t0 + temps aller ---
+    t_aller  = d_emetteur * h / c_eau   # distance [m] / vitesse [m/s]
+    t_impact = t0_emit + t_aller
 
-    # --- Objet réel ---
+    # --- Position réelle au moment de l'impact ---
+    dx_impact = (vx_bat / h) * t_impact  # noeuds
+    dy_impact = (vy_bat / h) * t_impact  # noeuds
+    position_impact = np.array(position_reelle) + np.array([dx_impact, dy_impact])
+
+    # --- Conversion maillage → mètres ---
+    capteurs_m  = np.array(position_capteurs) * h
+    estimee_m   = np.array(position_estimee)  * h
+    reelle_m    = np.array(position_reelle)   * h
+    impact_m    = position_impact             * h
+    distances_m = np.array(distances)         * h
+
+    taille_m = taille_bateau * h
+
+    # --- Position initiale (fantôme) ---
     x_r, y_r = reelle_m
-    bateau_reel = plt.Rectangle(
-        (y_r - taille_bateau / 2, x_r - taille_bateau / 2),
-        taille_bateau, taille_bateau,
-        color="black", alpha=0.6, label="Position réelle", zorder=4
+    bateau_initial = plt.Rectangle(
+        (y_r - taille_m / 2, x_r - taille_m / 2),
+        taille_m, taille_m,
+        color="grey", alpha=0.3, linestyle="--",
+        label="Position initiale (t=0)", zorder=3
     )
-    ax.add_patch(bateau_reel)
+    ax.add_patch(bateau_initial)
+
+    # --- Position au moment de l'impact ---
+    x_i, y_i = impact_m
+    bateau_impact = plt.Rectangle(
+        (y_i - taille_m / 2, x_i - taille_m / 2),
+        taille_m, taille_m,
+        color="black", alpha=0.6,
+        label=f"Position à l'impact (t={t_impact:.3f} s)", zorder=4
+    )
+    ax.add_patch(bateau_impact)
+
+    # --- Trajectoire initiale → impact ---
+    ax.annotate("", xy=(y_i, x_i), xytext=(y_r, x_r),
+                arrowprops=dict(arrowstyle="->", color="black", lw=1.5, linestyle="dashed"))
 
     # --- Position estimée ---
     x_e, y_e = estimee_m
@@ -399,36 +538,31 @@ def plot_localisation_echo(position_capteurs, position_estimee, position_reelle,
     # --- Capteurs + cercles + lignes ---
     for i in range(n_capteurs):
         x_c, y_c = capteurs_m[i]
-        couleur = couleurs_capteurs[i]
+        couleur   = couleurs_capteurs[i]
 
         ax.scatter(y_c, x_c, color=couleur, s=100, zorder=4, marker="^")
         ax.text(y_c + 0.5, x_c + 0.5, f"C{i+1}", color=couleur, fontsize=10, fontweight="bold")
 
-        # Distance en mètres
-        distance = c_eau * (temps_echo[i] - t0_vect[i]) / 2
-
-        # Cercle de distance centré sur le capteur (en mètres)
         cercle = plt.Circle(
-            (y_c, x_c), radius=distance,
+            (y_c, x_c), radius=distances_m[i],
             color=couleur, fill=False, linestyle="--", linewidth=1.2, alpha=0.7,
-            label=f"C{i+1} — d = {distance:.1f} m"
+            label=f"C{i+1} — d = {distances_m[i]:.1f} m"
         )
         ax.add_patch(cercle)
 
-        # Ligne capteur → estimée
         ax.plot([y_c, y_e], [x_c, x_e],
                 color=couleur, linestyle="-", linewidth=1.2, alpha=0.6)
 
-        # Annotation distance
         mid_x = (y_c + y_e) / 2
         mid_y = (x_c + x_e) / 2
-        ax.text(mid_x, mid_y, f"{distance:.1f} m", color=couleur,
+        ax.text(mid_x, mid_y, f"{distances_m[i]:.1f} m", color=couleur,
                 fontsize=8, ha="center",
                 bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.6))
 
-    # --- Erreur ---
-    erreur = np.linalg.norm(estimee_m - reelle_m)
-    ax.set_title(f"Localisation par multilatération\nErreur : {erreur:.2f} m", fontsize=13)
+    # --- Erreur par rapport à la position d'impact ---
+    erreur = np.linalg.norm(estimee_m - impact_m)
+    ax.set_title(f"Localisation par multilatération\n"
+                 f"Erreur vs impact : {erreur:.2f} m  |  t_impact = {t_impact:.3f} s", fontsize=13)
 
     ax.set_xlim(0, L)
     ax.set_ylim(0, L)
@@ -466,72 +600,147 @@ def generer_position_bateau(position_capteurs, nx, ny, epaisseur_pml, distance_m
         if np.all(distances >= distance_min_capteur):
             return [x, y]
 
-def run_simulations(n_simulations, position_capteurs, distance_min_capteur, taille_bateau, nx, ny, epaisseur_pml, c_eau):
-    """
-    n_simulations        : nombre de simulations à effectuer
-    position_capteurs    : array[N_capteurs, 2] en indices de maillage
-    distance_min_capteur : distance minimale entre capteur et bateau (indices)
-    taille_bateau        : demi-taille du bateau (indices)
-    """
+def plot_positions_estimees(position_capteurs, positions_estimees, positions_reelles_impact, t_impacts, t0_par_pulse, taille_bateau, vx_bat=0, vy_bat=0, L=L, h=h):
 
-    erreurs_centre = []
-    erreurs_bord   = []
+    fig, ax = plt.subplots(figsize=(9, 9))
+    n_capteurs         = position_capteurs.shape[0]
+    couleurs_capteurs  = ["red", "blue", "green"]
+    capteurs_m         = np.array(position_capteurs) * h
+    positions_estimees = np.array(positions_estimees)
+    positions_m        = positions_estimees * h
+    taille_m           = taille_bateau * h
 
-    # Simulation sans bateau (faite une seule fois)
-    intensité_sans_bateau, t_hist = simulation_sonar(position_capteurs, [5, 5], taille_bateau, show_animation=False)
+    # --- Trajectoire réelle ---
+    t_fine   = np.linspace(min(t_impacts), max(t_impacts), 200)
+    x0_m, y0_m = np.array(positions_reelles_impact[0]) - vx_bat * t_impacts[0], \
+                 np.array(positions_reelles_impact[0]) - vy_bat * t_impacts[0]
+    # On reconstitue depuis la position initiale en mètres
+    pos_init_m = np.array(position_capteurs[0]) * 0  # juste pour clarté
+    traj_x = [r[0] for r in positions_reelles_impact]
+    traj_y = [r[1] for r in positions_reelles_impact]
+    ax.plot(traj_y, traj_x, color="black", linestyle="--", linewidth=1.2,
+            alpha=0.5, label="Trajectoire réelle", zorder=2)
 
-    for i in range(n_simulations):
-
-        print(f"\n--- Simulation {i+1}/{n_simulations} ---")
-
-        # Position aléatoire du bateau
-        position_bateau = generer_position_bateau(position_capteurs, nx, ny, epaisseur_pml, distance_min_capteur,taille_bateau)
-
-        # Simulation avec bateau
-        intensité_avec_bateau, t_hist = simulation_sonar(
-            position_capteurs, position_bateau, taille_bateau, show_animation=False
+    # --- Position réelle à chaque impact ---
+    for k, (pos_r, t_imp) in enumerate(zip(positions_reelles_impact, t_impacts)):
+        x_r, y_r = pos_r
+        bateau = plt.Rectangle(
+            (y_r - taille_m / 2, x_r - taille_m / 2),
+            taille_m, taille_m,
+            color="black", alpha=0.15, zorder=3,
+            label="Position réelle à l'impact" if k == 0 else "_nolegend_"
         )
+        ax.add_patch(bateau)
+        ax.text(y_r + 0.5, x_r + 0.5, f"R{k+1}\nt={t_imp:.2f}s", color="black", fontsize=7, alpha=0.7)
 
-        intensité_echo = intensité_avec_bateau - intensité_sans_bateau
-        show_echo(intensité_echo, t_hist)
+    # --- Capteurs ---
+    for i in range(n_capteurs):
+        x_c, y_c = capteurs_m[i]
+        ax.scatter(y_c, x_c, color=couleurs_capteurs[i], s=100, zorder=5, marker="^")
+        ax.text(y_c + 0.5, x_c + 0.5, f"C{i+1}", color=couleurs_capteurs[i], fontsize=10, fontweight="bold")
+        
+    # --- Positions estimées ---
+    cmap    = plt.cm.plasma
+    colors  = [cmap(k / max(len(positions_estimees) - 1, 1)) for k in range(len(positions_estimees))]
+    erreurs = []
 
-        # Multilatération
-        try:
-            pos_estimee, temps_echo = multilateration(intensité_echo, t_hist, position_capteurs, c_eau)
-        except ValueError as e:
-            print(f"  ⚠ Simulation ignorée : {e}")
-            continue
+    for k, (pos_m, pos_r, couleur, t0) in enumerate(zip(positions_m, positions_reelles_impact, colors, t0_par_pulse)):
+        x_e, y_e = pos_m
+        x_r, y_r = pos_r
+        erreur    = np.linalg.norm(pos_m - pos_r)
+        erreurs.append(erreur)
 
-        # Positions en mètres
-        reelle = np.array(position_bateau)
-        estimee = np.array(pos_estimee)
+        ax.scatter(y_e, x_e, marker="*", color=couleur, s=250, zorder=6,
+                   edgecolors="black", linewidths=0.8,
+                   label=f"P{k+1} | t={t0:.2f}s | err={erreur:.1f}m")
+        ax.text(y_e + 0.5, x_e + 0.5, f"P{k+1}", color=couleur, fontsize=9, fontweight="bold")
 
-        # Erreur centre → centre
-        erreur_centre = np.linalg.norm(estimee - reelle)
+        # Ligne erreur réelle → estimée
+        ax.plot([y_r, y_e], [x_r, x_e],
+                color=couleur, linestyle=":", linewidth=1.0, alpha=0.7)
 
-        # Erreur bord → bord (on soustrait la taille du bateau en mètres)
-        erreur_bord = max(0.0, erreur_centre - taille_bateau)
+    # --- Trajectoire estimée ---
+    if len(positions_m) >= 2:
+        ax.plot(positions_m[:, 1], positions_m[:, 0],
+                color="orange", linestyle="-", linewidth=1.5,
+                alpha=0.8, label="Trajectoire estimée", zorder=4)
 
-        erreurs_centre.append(erreur_centre)
-        erreurs_bord.append(erreur_bord)
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=min(t0_par_pulse), vmax=max(t0_par_pulse)))
+    sm.set_array([])
+    plt.colorbar(sm, ax=ax, label="Temps d'émission [s]", shrink=0.6)
 
-        print(f"  Position réelle    : {position_bateau}  ({reelle*h} )")
-        print(f"  Position estimée   : {estimee} ({estimee*h} ) m")
-        print(f"  Erreur centre      : {erreur_centre*h:.2f} m")
-        print(f"  Erreur bord        : {erreur_bord*h:.2f} m")
+    erreur_moy = np.mean(erreurs)
+    ax.set_xlim(0, L)
+    ax.set_ylim(0, L)
+    ax.set_xlabel("y [m]")
+    ax.set_ylabel("x [m]")
+    ax.set_aspect("equal")
+    ax.set_title(f"Évolution des positions estimées\nErreur moyenne : {erreur_moy:.2f} m", fontsize=13)
+    ax.grid(True, alpha=0.4)
+    ax.legend(loc="upper right", fontsize=8)
+    plt.tight_layout()
+    plt.show()
 
-    erreurs_centre = np.array(erreurs_centre) * h
-    erreurs_bord   = np.array(erreurs_bord) * h
+def estimer_vitesse(positions_estimees, t0_par_pulse, h):
+
+    positions_estimees = np.array(positions_estimees)
+    t0_par_pulse       = np.array(t0_par_pulse)
+
+    if len(positions_estimees) < 2:
+        print("⚠ Pas assez de positions pour estimer la vitesse.")
+        return None, None
+
+    # Positions en mètres
+    positions_m = positions_estimees * h  # [N_pulses, 2]
+
+    # Régression linéaire sur x et y séparément
+    # x(t) = vx * t + x0
+    # y(t) = vy * t + y0
+    A = np.column_stack([t0_par_pulse, np.ones(len(t0_par_pulse))])  # matrice [N, 2]
+
+    # Moindres carrés : [vx, x0] et [vy, y0]
+    sol_x, _, _, _ = np.linalg.lstsq(A, positions_m[:, 0], rcond=None)
+    sol_y, _, _, _ = np.linalg.lstsq(A, positions_m[:, 1], rcond=None)
+
+    vx_estime, x0_estime = sol_x
+    vy_estime, y0_estime = sol_y
+
+    vitesse_estimee = np.array([vx_estime, vy_estime])
+    norme_vitesse   = np.linalg.norm(vitesse_estimee)
 
     print(f"\n{'='*45}")
-    print(f"  Résultats sur {len(erreurs_centre)} simulations valides")
+    print(f"  Estimation de la vitesse du bateau")
     print(f"{'='*45}")
-    print(f"  Erreur moyenne centre : {np.mean(erreurs_centre):.2f} m  (±{np.std(erreurs_centre):.2f} m)")
-    print(f"  Erreur moyenne bord   : {np.mean(erreurs_bord):.2f} m  (±{np.std(erreurs_bord):.2f} m) pour un bateau de {taille_bateau*h:.2f} m")
+    print(f"  vx estimé : {vx_estime:.2f} m/s")
+    print(f"  vy estimé : {vy_estime:.2f} m/s")
+    print(f"  ||v||     : {norme_vitesse:.2f} m/s")
     print(f"{'='*45}")
 
-    return erreurs_centre, erreurs_bord
+    # --- Graphique ---
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
+    t_fine = np.linspace(t0_par_pulse[0], t0_par_pulse[-1], 100)
+
+    for ax, coord, sol, label in zip(
+        axes,
+        [positions_m[:, 0], positions_m[:, 1]],
+        [sol_x, sol_y],
+        ["x [m]", "y [m]"]
+    ):
+        v_est, p0_est = sol
+        ax.scatter(t0_par_pulse, coord, color="blue", zorder=5, label="Positions estimées")
+        ax.plot(t_fine, v_est * t_fine + p0_est, color="red", linestyle="--", label=f"Régression : v = {v_est:.2f} m/s")
+        ax.set_xlabel("Temps d'émission [s]")
+        ax.set_ylabel(label)
+        ax.set_title(f"Régression linéaire — {label}")
+        ax.legend()
+        ax.grid(True, alpha=0.4)
+
+    plt.suptitle("Estimation de la vitesse par régression linéaire", fontsize=13)
+    plt.tight_layout()
+    plt.show()
+
+    return vitesse_estimee, (x0_estime, y0_estime)
 
 # Paramètre du PML
 epaisseur_pml = 75  # épaisseur 
@@ -542,47 +751,113 @@ gamma = PML(nx, ny, epaisseur_pml, puissance=3, gamma_max=gamma_max)
 show_pml(False)
 
 # Position et taille du bateau (pour le moment c'est juste un carré)
-position_bateau = [95, 75] # ( x, y ) en position du noeud. Ne sert seulement si position_aléatoire = False
-taille_bateau = 4 # En nombre de noeuds
+position_bateau = [150, 150] # ( x, y ) en position du noeud. Ne sert seulement si position_aléatoire = False
+taille_bateau = 6 # En nombre de noeuds
+vx_bat = 50 #m/s
+vy_bat = 0 #m/s
+
 
 # Si on veut générer une position aléatoire du bateau
 distance_min_capteur = 25 # Distance minimale entre le capteur et le bateau (sinon ça detecte pas l'echo)
-n_simulations        = 20 # Nombre de simulation (ne sert seuelement si position_aléatoire = False)
+n_simulations        = 20 # Nombre de simulation (ne sert seulement si position_aléatoire = False)
 
 # Positions des capteurs (en position du noeud)
-sensor1_pos = (75, 225)
-sensor2_pos = (75, 75)
+sensor1_pos = (85, 215)
+sensor2_pos = (85, 75)
 sensor3_pos = (225, 75)
 position_capteurs = np.array([sensor1_pos, sensor2_pos, sensor3_pos])
+plages = get_plages_pulses(t0_vect, t)
 
-position_aléatoire = True
+position_aléatoire = False
 if position_aléatoire == True:
-    erreurs_centre, erreurs_bord = run_simulations(n_simulations, position_capteurs, distance_min_capteur, taille_bateau, nx, ny, epaisseur_pml, c_eau)
+    #erreurs_centre, erreurs_bord = run_simulations(n_simulations, position_capteurs, distance_min_capteur, taille_bateau, nx, ny, epaisseur_pml, c_eau)
+    joe = "biden"
 
 
 else : # Cette option sert si on veut juste faire une seule simulation
     
     # Sert à trouver l'intensité de l'echo (on pourrait optimiser quand on va faire pleins de simulations pour ne pas refaire celle sans bateau)
-    intensité_avec_bateau, t_hist = simulation_sonar(position_capteurs, position_bateau, taille_bateau)
-    intensité_sans_bateau, t_hist = simulation_sonar(position_capteurs, [5,5], taille_bateau) # Le bateau dans le pml comme si il était pas là
+
+    intensité_avec_bateau, t_hist = simulation_sonar(position_capteurs, position_bateau, taille_bateau, pulses_config, vx_bat=vx_bat, vy_bat=vy_bat)
+    intensité_sans_bateau, t_hist = simulation_sonar(position_capteurs, [5, 5], taille_bateau, pulses_config, vx_bat=0, vy_bat=0)
     intensité_echo = intensité_avec_bateau - intensité_sans_bateau
 
     # Graphique de l'echo
-    show_echo(False)
+    show_echo(intensité_echo, t_hist, pulses_config)
 
-    # Trouver la position de l'objet avec la multilatération
-    pos, temps_echo = multilateration(intensité_echo, position_capteurs, c_eau)
-    print("Position réelle", position_bateau, "et il a un rayon de ", taille_bateau)
-    print("Position estimée :", pos)
+    plages = get_plages_pulses(pulses_config, t)
 
-    # Afficher le graphique de la position estimée
-    plot_shema = True
-    if plot_shema == True: 
-        plot_localisation_echo(position_capteurs, pos, position_bateau, t0_vect, temps_echo, c_eau, taille_bateau)
+    positions_estimees  = []
+    distances_par_pulse = []
+    t0_par_pulse        = []
+    plot_schema = True
 
+    positions_reelles_impact = [] 
+    t_impacts                = []  
 
+    for k, (idx_emit, t_debut_plage, t_fin_plage) in enumerate(plages):
 
+        pos, temps_echo, distances, idx_emit_retour = multilateration_un_pulse(
+            intensité_echo, t_hist, position_capteurs, c_eau,
+            idx_emetteur  = idx_emit,
+            t_debut_plage = t_debut_plage,
+            t_fin_plage   = t_fin_plage
+        )
 
+        # Position réelle au moment de l'impact
+        position_impact_m, t_impact = calc_position_reelle_impact(
+            position_bateau,
+            t0_emit    = t_debut_plage,
+            d_emetteur = distances[idx_emit_retour],
+            vx_bat     = vx_bat,
+            vy_bat     = vy_bat,
+            h          = h,
+            c_eau      = c_eau
+        )
 
+        positions_reelles_impact.append(position_impact_m)
+        t_impacts.append(t_impact)
+        positions_estimees.append(pos)
+        distances_par_pulse.append(distances)
+        t0_par_pulse.append(t_debut_plage)
 
+        erreur = np.linalg.norm(np.array(pos) * h - position_impact_m)
+        print(f"  Position réelle à l'impact : {position_impact_m} m  (t_impact={t_impact:.3f}s)")
+        print(f"  Position estimée           : {np.array(pos) * h} m")
+        print(f"  Erreur                     : {erreur:.2f} m")
+
+        if plot_schema:
+            plot_localisation_echo(
+                position_capteurs, pos, position_bateau, distances,
+                taille_bateau,
+                t0_emit    = t_debut_plage,
+                d_emetteur = distances[idx_emit_retour],
+                vx_bat     = vx_bat,
+                vy_bat     = vy_bat
+            )
+
+    positions_estimees = np.array(positions_estimees)
+
+    plot_positions_estimees(
+        position_capteurs, positions_estimees, positions_reelles_impact,
+        t_impacts, t0_par_pulse, taille_bateau,
+        vx_bat=vx_bat, vy_bat=vy_bat)
+
+    # Moyenne
+    pos_moyenne = np.mean(positions_estimees, axis=0)
+    erreur_moyenne = np.linalg.norm(pos_moyenne - np.array(position_bateau))
+    print(f"\n--- Moyenne des {len(positions_estimees)} estimées ---")
+    print(f"  Position moyenne : {pos_moyenne * h} m")
+    print(f"  Erreur moyenne   : {erreur_moyenne * h:.2f} m")
+
+    # Estimation de la vitesse
+    if len(positions_estimees) >= 2:
+        vitesse_estimee, position_initiale = estimer_vitesse(positions_estimees, t0_par_pulse, h)
+
+        # Comparaison avec la vraie vitesse
+        if vitesse_estimee is not None:
+            vrai_v     = np.array([vx_bat, vy_bat])
+            erreur_v   = np.linalg.norm(vitesse_estimee - vrai_v)
+            print(f"  Vitesse réelle    : vx={vx_bat:.2f} m/s, vy={vy_bat:.2f} m/s, ||v||={np.linalg.norm(vrai_v):.2f} m/s")
+            print(f"  Erreur sur vitesse: {erreur_v:.2f} m/s")
 
