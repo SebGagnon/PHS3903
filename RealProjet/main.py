@@ -590,47 +590,472 @@ def run_simul(
     }
 
 
+def methode_multilateration():
+
+
+    objet_loin = {
+    "forme": "cercle",              # "cercle" ou "rectangle"
+    "centre_init_m": (0, 0),  # position initiale en mètres
+    "vitesse_m_s": (0, 0),     # vitesse (vx, vy) en m/s
+     "rayon_m": 0.0,                 # pour un cercle
+    # "taille_m": (10.0, 2.0),       # pour un rectangle
+    "c_objet": 5200.0,              # vitesse du son dans l'objet
+    "gamma_objet": 4000.0,          # amortissement dans l'objet
+    "actif": True,
+}
+    
+    resultats_sans_bateau = run_simul(
+    L=L,
+    t_total=t_total,
+    nx=nx,
+    ny=ny,
+    rho=rho,
+    kappa=kappa,
+    cfl=cfl,
+    epaisseur_pml_ratio=epaisseur_pml_ratio,
+    puissance_pml=puissance_pml,
+    gamma_max=gamma_max,
+    # nb_capteurs=nb_capteurs,
+    capteurs=capteurs,
+    ajouter_emission_defaut_si_vide=True,
+    t_depart_pulses=0.01,
+    dt_pulse=0.01,
+    sigma_source=sigma_source,
+    f_source=f_source,
+    A0_source=A0_source,
+    tau_source=tau_source,
+    objet=objet_loin,
+    nb_frames=nb_frames,
+    afficher_pml_flag=False,
+    afficher_waveform_flag=False,
+    afficher_animation=False,
+    afficher_capteurs_flag=False,
+    seed=seed,
+)
+    resultats_avec_bateau = run_simul(
+    L=L,
+    t_total=t_total,
+    nx=nx,
+    ny=ny,
+    rho=rho,
+    kappa=kappa,
+    cfl=cfl,
+    epaisseur_pml_ratio=epaisseur_pml_ratio,
+    puissance_pml=puissance_pml,
+    gamma_max=gamma_max,
+    # nb_capteurs=nb_capteurs,
+    capteurs=capteurs,
+    ajouter_emission_defaut_si_vide=True,
+    t_depart_pulses=0.01,
+    dt_pulse=0.01,
+    sigma_source=sigma_source,
+    f_source=f_source,
+    A0_source=A0_source,
+    tau_source=tau_source,
+    objet=objet,
+    nb_frames=nb_frames,
+    afficher_pml_flag=False,
+    afficher_waveform_flag=False,
+    afficher_animation=True,
+    afficher_capteurs_flag=True,
+    seed=seed,
+)
+    
+    # --- Extraction au format de ton ancien code ---
+    t_hist                = resultats_avec_bateau["temps"]
+    signaux_avec_bateau   = resultats_avec_bateau["signaux_capteurs"]   # liste de N arrays
+    signaux_sans_bateau   = resultats_sans_bateau["signaux_capteurs"]
+    c_eau                 = resultats_sans_bateau["c_eau"]
+
+    # intensité_echo[i] = signal de l'écho du capteur i
+    intensite_echo = np.array([
+        signaux_avec_bateau[i] - signaux_sans_bateau[i]
+        for i in range(len(signaux_avec_bateau))
+    ])  # shape [N_capteurs, N_temps]
+    
+    show_echo(intensite_echo, t_hist, capteurs, t_total)
+
+    plages = get_plages_pulses(capteurs, t_total)
+
+    for k, (idx_emit, t_debut_plage, t_fin_plage) in enumerate(plages):
+
+        pos_m, temps_echo, distances, idx_emit_retour = multilateration_un_pulse(
+            intensite_echo, t_hist, capteurs, c_eau,
+            idx_emetteur  = idx_emit,
+            t_debut_plage = t_debut_plage,
+            t_fin_plage   = t_fin_plage
+        )
+        # pos_m est maintenant directement en mètres
+
+        plot_localisation_echo(
+        capteurs          = capteurs,
+        position_estimee_m = pos_m,
+        objet             = objet,
+        distances_m       = distances,
+        t0_emit           = t_debut_plage,
+        d_emetteur        = distances[idx_emit_retour],
+        c_eau             = c_eau,
+        L                 =  L
+    )
+
+
+def get_plages_pulses(capteurs, t_total):
+    """
+    Extrait les plages temporelles depuis la structure capteurs.
+    Compatible avec emissions sous forme de floats [t0, ...] 
+    ou de dicts [{"t0": t0, ...}, ...]
+    """
+
+    tous_les_pulses = []
+    for idx_capteur, capteur in enumerate(capteurs):
+        for emission in capteur.get("emissions", []):
+
+            # --- Compatibilité float ou dict ---
+            if isinstance(emission, dict):
+                t0 = emission["t0"]
+            else:
+                t0 = float(emission)
+
+            tous_les_pulses.append((idx_capteur, t0))
+
+    if len(tous_les_pulses) == 0:
+        print("⚠ Aucun pulse détecté dans les capteurs.")
+        return []
+
+    # --- Trier par temps d'émission ---
+    tous_les_pulses.sort(key=lambda x: x[1])
+
+    # --- Construire les plages ---
+    t0_list = [p[1] for p in tous_les_pulses]
+    plages  = []
+
+    for i, (idx_capteur, t0) in enumerate(tous_les_pulses):
+        t_debut = t0
+        t_fin   = t0_list[i + 1] if i + 1 < len(tous_les_pulses) else t_total
+        plages.append((idx_capteur, t_debut, t_fin))
+
+    return plages
+
+
+def construire_pulse_data(capteurs):
+    """
+    Convertit la liste capteurs en liste (x0, y0, t0) pour source_sonar_multi.
+    Compatible avec emissions sous forme de floats ou de dicts.
+    """
+    pulse_data = []
+    for capteur in capteurs:
+        x0, y0 = capteur["position"]
+        for emission in capteur.get("emissions", []):
+            if isinstance(emission, dict):
+                t0 = emission["t0"]
+            else:
+                t0 = float(emission)
+            pulse_data.append((x0, y0, t0))
+    return pulse_data
+
+
+def max_enveloppe_plage(signal, t_hist, t_debut_plage, t_fin_plage, seuil_montee=1):
+    mask = (t_hist >= t_debut_plage) & (t_hist < t_fin_plage)
+
+    if not np.any(mask):
+        return None, None, np.abs(hilbert(signal))
+
+    signal_plage    = signal[mask]
+    t_hist_plage    = t_hist[mask]
+    enveloppe_plage = np.abs(hilbert(signal_plage))
+
+    idx_pic_local = np.argmax(enveloppe_plage)
+    amp_pic       = enveloppe_plage[idx_pic_local]
+
+    seuil_debut = seuil_montee * amp_pic
+    idx_debut   = idx_pic_local
+    while idx_debut > 0 and enveloppe_plage[idx_debut] > seuil_debut:
+        idx_debut -= 1
+
+    enveloppe_full = np.abs(hilbert(signal))
+    return t_hist_plage[idx_debut], enveloppe_plage[idx_debut], enveloppe_full
+
+
+def show_echo(intensite_echo, t_hist, capteurs, t_total, Echo = False):
+    """
+    Affiche les échos par plage temporelle (un sous-graphique par pulse).
+
+    intensite_echo : array [N_capteurs, N_temps]
+    capteurs       : liste de dicts avec champ "emissions" (nouveau format)
+    t_total        : durée totale de la simulation [s]
+    """
+    if not Echo:
+        return
+
+    plages   = get_plages_pulses(capteurs, t_total)
+    n_pulses = len(plages)
+    n_capteurs = len(capteurs)
+
+    # Couleurs dynamiques selon le nombre de capteurs
+    cmap     = plt.cm.tab10
+    couleurs = [cmap(i % 10) for i in range(n_capteurs)]
+    labels   = [f"Capteur {i+1}" for i in range(n_capteurs)]
+
+    fig, axes = plt.subplots(n_pulses, 1, figsize=(10, 4 * n_pulses), sharex=False)
+    if n_pulses == 1:
+        axes = [axes]
+
+    for k, (idx_emit, t_debut, t_fin) in enumerate(plages):
+        ax   = axes[k]
+        mask = (t_hist >= t_debut) & (t_hist < t_fin)
+
+        for i, signal in enumerate(intensite_echo):
+            ax.plot(t_hist[mask], signal[mask], color=couleurs[i], alpha=0.4)
+
+            t_max, amp_max, enveloppe_full = max_enveloppe_plage(
+                signal, t_hist, t_debut, t_fin
+            )
+            ax.plot(t_hist[mask], enveloppe_full[mask],
+                    color=couleurs[i], linestyle="--", label=labels[i])
+
+            if t_max is not None:
+                ax.scatter(t_max, amp_max, color=couleurs[i], s=80, zorder=5)
+                ax.axvline(t_max, color=couleurs[i], linestyle=":", alpha=0.7)
+
+        ax.axvline(t_debut, color="black", linestyle="-", linewidth=1.5,
+                   label=f"Émission C{idx_emit+1} (t={t_debut:.2f}s)")
+        ax.set_xlim(t_debut, t_fin)
+        ax.set_xlabel("Temps [s]")
+        ax.set_ylabel("Amplitude")
+        ax.set_title(f"Pulse {k+1} — Émetteur C{idx_emit+1} | [{t_debut:.2f}s, {t_fin:.2f}s]")
+        ax.legend(loc="upper right", fontsize=8)
+        ax.grid(True, alpha=0.4)
+
+    plt.suptitle("Échos par plage de pulse", fontsize=13)
+    plt.tight_layout()
+    plt.show()
+
+
+def multilateration_un_pulse(intensite_echos, t_hist, capteurs, c_eau,
+                              idx_emetteur=0, t_debut_plage=None, t_fin_plage=None):
+    """
+    intensite_echos : array [N_capteurs, N_temps]
+    capteurs        : liste de dicts avec champ "position" en noeuds
+    c_eau           : vitesse du son dans l'eau [m/s]
+    idx_emetteur    : index du capteur émetteur
+    """
+
+    intensite_echos = np.array(intensite_echos)
+    n_capteurs      = len(capteurs)
+    h               = L / nx  # taille d'un noeud [m]
+
+    # --- Positions des capteurs en mètres ---
+    positions_m = np.array([
+        [capteur["position"][0] * h, capteur["position"][1] * h]
+        for capteur in capteurs
+    ])
+
+    # -------- DETECTION DES TEMPS D'ECHO --------
+    temps_echo = []
+    for i, signal in enumerate(intensite_echos):
+        if t_debut_plage is not None and t_fin_plage is not None:
+            t_max, amp_max, _ = max_enveloppe_plage(signal, t_hist, t_debut_plage, t_fin_plage)
+        else:
+            raise ValueError("t_debut_plage et t_fin_plage doivent être fournis.")
+
+        if t_max is None:
+            raise ValueError(f"Pas de pic détecté pour capteur {i+1}")
+        temps_echo.append(t_max)
+
+    temps_echo = np.array(temps_echo)
+    t0_emit    = t_debut_plage if t_debut_plage is not None else 0.0
+
+    # -------- DISTANCES en mètres --------
+    # Émetteur : aller-retour
+    d_emetteur = c_eau * (temps_echo[idx_emetteur] - t0_emit) / 2  # [m]
+
+    # Récepteurs : trajet total - aller
+    indices_recepteurs = [i for i in range(n_capteurs) if i != idx_emetteur]
+    d_recepteurs = {
+        i: c_eau * (temps_echo[i] - t0_emit) - d_emetteur
+        for i in indices_recepteurs
+    }
+
+    # Assemblage distances en mètres
+    distances               = np.zeros(n_capteurs)
+    distances[idx_emetteur] = d_emetteur
+    for i in indices_recepteurs:
+        distances[i] = d_recepteurs[i]
+
+    # -------- RÉSIDUS en mètres --------
+    def residuals(x):
+        res = [np.linalg.norm(x - positions_m[idx_emetteur]) - d_emetteur]
+        for i in indices_recepteurs:
+            res.append(np.linalg.norm(x - positions_m[i]) - d_recepteurs[i])
+        return res
+
+    x0  = np.mean(positions_m, axis=0)
+    sol = least_squares(residuals, x0)
+
+    # position estimée en mètres
+    return sol.x, temps_echo, distances, idx_emetteur
+
+
+def calc_position_reelle_impact(objet, t0_emit, d_emetteur, c_eau):
+    """
+    objet      : dict avec "centre_init_m" et "vitesse_m_s"
+    t0_emit    : temps d'émission du pulse [s]
+    d_emetteur : distance émetteur → objet [m]
+    """
+    vx, vy   = objet["vitesse_m_s"]
+    x0, y0   = objet["centre_init_m"]
+
+    t_aller  = d_emetteur / c_eau        # [s]
+    t_impact = t0_emit + t_aller
+
+    x_impact = x0 + vx * t_impact       # [m]
+    y_impact = y0 + vy * t_impact       # [m]
+
+    return np.array([x_impact, y_impact]), t_impact
+
+
+def plot_localisation_echo(capteurs, position_estimee_m, objet, distances_m,
+                           t0_emit, d_emetteur, c_eau, L):
+    """
+    capteurs           : liste de dicts avec "position" en noeuds et "nom"
+    position_estimee_m : position estimée [m]
+    objet              : dict avec "centre_init_m", "vitesse_m_s", "rayon_m" ou "taille_m"
+    distances_m        : array[N_capteurs] en mètres
+    t0_emit            : temps d'émission [s]
+    d_emetteur         : distance émetteur → objet [m]
+    """
+    h = L / nx
+
+    fig, ax   = plt.subplots(figsize=(8, 8))
+    n_capteurs = len(capteurs)
+    cmap       = plt.cm.tab10
+    couleurs_c = [cmap(i % 10) for i in range(n_capteurs)]
+
+    # --- Position réelle à l'impact ---
+    position_impact_m, t_impact = calc_position_reelle_impact(objet, t0_emit, d_emetteur, c_eau)
+
+    # --- Position initiale de l'objet ---
+    x0_m, y0_m = objet["centre_init_m"]
+
+    # --- Taille de l'objet ---
+    if objet["forme"] == "cercle":
+        rayon_m = objet.get("rayon_m", 5.0)
+        cercle_reel_init = plt.Circle((x0_m, y0_m), rayon_m,
+                                       color="grey", alpha=0.3,
+                                       label="Position initiale (t=0)", zorder=3)
+        ax.add_patch(cercle_reel_init)
+
+        x_i, y_i = position_impact_m
+        cercle_impact = plt.Circle((x_i, y_i), rayon_m,
+                                    color="black", alpha=0.6,
+                                    label=f"Position à l'impact (t={t_impact:.3f}s)", zorder=4)
+        ax.add_patch(cercle_impact)
+
+    elif objet["forme"] == "rectangle":
+        lx_m, ly_m = objet.get("taille_m", (5.0, 5.0))
+
+        ax.add_patch(plt.Rectangle(
+            (x0_m - lx_m/2, y0_m - ly_m/2), lx_m, ly_m,
+            color="grey", alpha=0.3, label="Position initiale (t=0)", zorder=3
+        ))
+        x_i, y_i = position_impact_m
+        ax.add_patch(plt.Rectangle(
+            (x_i - lx_m/2, y_i - ly_m/2), lx_m, ly_m,
+            color="black", alpha=0.6,
+            label=f"Position à l'impact (t={t_impact:.3f}s)", zorder=4
+        ))
+
+    # --- Flèche trajectoire ---
+    ax.annotate("", xy=(x_i, y_i), xytext=(x0_m, y0_m),
+                arrowprops=dict(arrowstyle="->", color="black", lw=1.5))
+
+    # --- Position estimée ---
+    x_e, y_e = position_estimee_m
+    ax.scatter(x_e, y_e, marker="*", color="gold", s=250, zorder=5,
+               edgecolors="black", linewidths=0.8, label="Position estimée (MC)")
+
+    # --- Capteurs + cercles + lignes ---
+    for i, capteur in enumerate(capteurs):
+        ix, iy  = capteur["position"]
+        x_c, y_c = ix * h, iy * h
+        couleur  = couleurs_c[i]
+        nom      = capteur.get("nom", f"C{i+1}")
+
+        ax.scatter(x_c, y_c, color=couleur, s=100, zorder=4, marker="^")
+        ax.text(x_c + 0.5, y_c + 0.5, nom, color=couleur, fontsize=9, fontweight="bold")
+
+        ax.add_patch(plt.Circle(
+            (x_c, y_c), radius=distances_m[i],
+            color=couleur, fill=False, linestyle="--", linewidth=1.2, alpha=0.7,
+            label=f"{nom} — d={distances_m[i]:.1f}m"
+        ))
+
+        ax.plot([x_c, x_e], [y_c, y_e],
+                color=couleur, linestyle="-", linewidth=1.2, alpha=0.6)
+
+        mid_x = (x_c + x_e) / 2
+        mid_y = (y_c + y_e) / 2
+        ax.text(mid_x, mid_y, f"{distances_m[i]:.1f}m", color=couleur,
+                fontsize=8, ha="center",
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.6))
+
+    # --- Erreur ---
+    erreur = np.linalg.norm(position_estimee_m - position_impact_m)
+    ax.set_title(f"Localisation par multilatération\n"
+                 f"Erreur : {erreur:.2f} m  |  t_impact = {t_impact:.3f}s", fontsize=13)
+
+    ax.set_xlim(0, L)
+    ax.set_ylim(0, L)
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    ax.set_aspect("equal")
+    ax.grid(True, alpha=0.4)
+    ax.legend(loc="upper right", fontsize=9)
+    plt.tight_layout()
+    plt.show()
+
 # =========================================================
 # EXEMPLE D'UTILISATION
 # =========================================================
 
-L = 500
-t_total = 0.5
-nx = 200
-ny = 200
+L = 1000
+t_total = 1
+nx = 300
+ny = 300
 
 rho = 1000
 kappa = 2.2e9
-cfl = 0.05
+cfl = 1
 
 epaisseur_pml_ratio = 0.2
 puissance_pml = 2
 gamma_max = 3000
 
 sigma_source = 1
-f_source = 0.5
+f_source = 1
 A0_source = 8e10
 tau_source = 0.001
 nb_frames = 100
 seed = 42
 
+
+
 # capteurs aléatoires
 capteurs = [
     {
         "nom": "Capteur 1",
-        "position": (110, 110),
-        "emissions": [0.010]
+        "position": (100, 50),
+        "emissions": [0.01]
     },
     {
         "nom": "Capteur 2",
-        "position": (90, 90),
+        "position": (50, 150),
         "emissions": []
     },
     {
         "nom": "Capteur 3",
-        "position": (75, 75),
-        "emissions": []
-    },
+        "position": (75, 150),
+        "emissions": []    },
    
 ]
 
@@ -638,8 +1063,8 @@ capteurs = [
 # objet
 objet = {
     "forme": "cercle",              # "cercle" ou "rectangle"
-    "centre_init_m": (600.0, 500.0),  # position initiale en mètres
-    "vitesse_m_s": (300.0, -300.0),     # vitesse (vx, vy) en m/s
+    "centre_init_m": (500.0, 400.0),  # position initiale en mètres
+    "vitesse_m_s": (0.0, 0.0),     # vitesse (vx, vy) en m/s
      "rayon_m": 10.0,                 # pour un cercle
     # "taille_m": (10.0, 2.0),       # pour un rectangle
     "c_objet": 5200.0,              # vitesse du son dans l'objet
@@ -647,7 +1072,14 @@ objet = {
     "actif": True,
 }
 
-resultats = run_simul(
+
+run_methode_multilateration = True
+
+if run_methode_multilateration:
+    methode_multilateration() # Modifier les paramètres d'affichage dans la fonction methode_multilateration
+
+else: 
+    resultats = run_simul(
     L=L,
     t_total=t_total,
     nx=nx,
@@ -676,8 +1108,9 @@ resultats = run_simul(
     seed=seed,
 )
 
-print("Simulation terminée")
-print("dt =", resultats["dt"])
-print("nt =", resultats["nt"])
-print("Nombre de pulses =", len(resultats["pulses"]))
-print("Énergie résiduelle [%] =", resultats["pourcentage_residuel"])
+    print("Simulation terminée")
+    print("dt =", resultats["dt"])
+    print("nt =", resultats["nt"])
+    print("Nombre de pulses =", len(resultats["pulses"]))
+    print("Énergie résiduelle [%] =", resultats["pourcentage_residuel"])
+
