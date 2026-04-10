@@ -677,27 +677,71 @@ def methode_multilateration():
 
     plages = get_plages_pulses(capteurs, t_total)
 
+    positions_estimees       = []
+    distances_par_pulse      = []
+    t0_par_pulse             = []
+    positions_reelles_impact = []
+    t_impacts                = []
+
     for k, (idx_emit, t_debut_plage, t_fin_plage) in enumerate(plages):
 
-        pos_m, temps_echo, distances, idx_emit_retour = multilateration_un_pulse(
-            intensite_echo, t_hist, capteurs, c_eau,
-            idx_emetteur  = idx_emit,
-            t_debut_plage = t_debut_plage,
-            t_fin_plage   = t_fin_plage
+        print(f"\n--- Pulse {k+1} | Émetteur C{idx_emit+1} | [{t_debut_plage:.3f}s, {t_fin_plage:.3f}s] ---")
+
+        try:
+            pos_m, temps_echo, distances, idx_emit_retour = multilateration_un_pulse(
+                intensite_echo, t_hist, capteurs, c_eau,
+                idx_emetteur  = idx_emit,
+                t_debut_plage = t_debut_plage,
+                t_fin_plage   = t_fin_plage
+            )
+
+            position_impact_m, t_impact = calc_position_reelle_impact(
+                objet      = objet,
+                t0_emit    = t_debut_plage,
+                d_emetteur = distances[idx_emit_retour],
+                c_eau      = c_eau
+            )
+
+            # Accumulation des résultats
+            positions_estimees.append(pos_m)
+            distances_par_pulse.append(distances)
+            t0_par_pulse.append(t_debut_plage)
+            positions_reelles_impact.append(position_impact_m)
+            t_impacts.append(t_impact)
+
+            erreur = np.linalg.norm(pos_m - position_impact_m)
+            print(f"  Position réelle à l'impact : {position_impact_m} m  (t={t_impact:.3f}s)")
+            print(f"  Position estimée           : {pos_m} m")
+            print(f"  Erreur                     : {erreur:.2f} m")
+
+            plot_localisation_echo(
+                capteurs           = capteurs,
+                position_estimee_m = pos_m,
+                objet              = objet,
+                distances_m        = distances,
+                t0_emit            = t_debut_plage,
+                d_emetteur         = distances[idx_emit_retour],
+                c_eau              = c_eau,
+                L                  = L
+            )
+
+        except ValueError as e:
+            print(f"  ⚠ Ignoré : {e}")
+
+    # --- Graphiques finaux ---
+    if len(positions_estimees) >= 1:
+        plot_positions_estimees(
+            capteurs                 = capteurs,
+            positions_estimees_m     = positions_estimees,
+            positions_reelles_impact = positions_reelles_impact,
+            t_impacts                = t_impacts,
+            t0_par_pulse             = t0_par_pulse,
+            objet                    = objet,
+            L                        = L
         )
-        # pos_m est maintenant directement en mètres
 
-        plot_localisation_echo(
-        capteurs          = capteurs,
-        position_estimee_m = pos_m,
-        objet             = objet,
-        distances_m       = distances,
-        t0_emit           = t_debut_plage,
-        d_emetteur        = distances[idx_emit_retour],
-        c_eau             = c_eau,
-        L                 =  L
-    )
-
+    if len(positions_estimees) >= 2:
+        vitesse_estimee, pos_initiale = estimer_vitesse(positions_estimees, t_impacts, objet)
 
 def get_plages_pulses(capteurs, t_total):
     """
@@ -915,7 +959,7 @@ def calc_position_reelle_impact(objet, t0_emit, d_emetteur, c_eau):
 
 
 def plot_localisation_echo(capteurs, position_estimee_m, objet, distances_m,
-                           t0_emit, d_emetteur, c_eau, L):
+                           t0_emit, d_emetteur, c_eau, L, plot_loc_echo = True):
     """
     capteurs           : liste de dicts avec "position" en noeuds et "nom"
     position_estimee_m : position estimée [m]
@@ -925,14 +969,19 @@ def plot_localisation_echo(capteurs, position_estimee_m, objet, distances_m,
     d_emetteur         : distance émetteur → objet [m]
     """
     h = L / nx
+    # --- Position réelle à l'impact ---
+    position_impact_m, t_impact = calc_position_reelle_impact(objet, t0_emit, d_emetteur, c_eau)
+
+    if not plot_loc_echo:
+        return position_impact_m, t_impact
+
+
 
     fig, ax   = plt.subplots(figsize=(8, 8))
     n_capteurs = len(capteurs)
     cmap       = plt.cm.tab10
     couleurs_c = [cmap(i % 10) for i in range(n_capteurs)]
 
-    # --- Position réelle à l'impact ---
-    position_impact_m, t_impact = calc_position_reelle_impact(objet, t0_emit, d_emetteur, c_eau)
 
     # --- Position initiale de l'objet ---
     x0_m, y0_m = objet["centre_init_m"]
@@ -1013,7 +1062,166 @@ def plot_localisation_echo(capteurs, position_estimee_m, objet, distances_m,
     ax.legend(loc="upper right", fontsize=9)
     plt.tight_layout()
     plt.show()
+    return position_impact_m, t_impact
 
+
+def plot_positions_estimees(capteurs, positions_estimees_m, positions_reelles_impact,
+                            t_impacts, t0_par_pulse, objet, L):
+    """
+    capteurs                : liste de dicts avec "position" en noeuds et "nom"
+    positions_estimees_m    : array[N_pulses, 2] en mètres
+    positions_reelles_impact: liste de array[2] en mètres
+    objet                   : dict avec "forme", "rayon_m" ou "taille_m", "vitesse_m_s"
+    """
+    h = L / nx
+
+    fig, ax            = plt.subplots(figsize=(9, 9))
+    n_capteurs         = len(capteurs)
+    cmap_cap           = plt.cm.tab10
+    couleurs_c         = [cmap_cap(i % 10) for i in range(n_capteurs)]
+    positions_estimees_m = np.array(positions_estimees_m)
+
+    # --- Taille de l'objet ---
+    if objet["forme"] == "cercle":
+        rayon_m = objet.get("rayon_m", 5.0)
+    else:
+        lx_m, ly_m = objet.get("taille_m", (5.0, 5.0))
+
+    # --- Trajectoire réelle ---
+    traj_x = [r[0] for r in positions_reelles_impact]
+    traj_y = [r[1] for r in positions_reelles_impact]
+    ax.plot(traj_x, traj_y, color="black", linestyle="--", linewidth=1.2,
+            alpha=0.5, label="Trajectoire réelle", zorder=2)
+
+    # --- Position réelle à chaque impact ---
+    for k, (pos_r, t_imp) in enumerate(zip(positions_reelles_impact, t_impacts)):
+        x_r, y_r = pos_r
+        label_r = "Position réelle à l'impact" if k == 0 else "_nolegend_"
+
+        if objet["forme"] == "cercle":
+            ax.add_patch(plt.Circle(
+                (x_r, y_r), rayon_m,
+                color="black", alpha=0.15, zorder=3, label=label_r
+            ))
+        else:
+            ax.add_patch(plt.Rectangle(
+                (x_r - lx_m/2, y_r - ly_m/2), lx_m, ly_m,
+                color="black", alpha=0.15, zorder=3, label=label_r
+            ))
+        ax.text(x_r + 0.5, y_r + 0.5, f"R{k+1}\nt={t_imp:.2f}s",
+                color="black", fontsize=7, alpha=0.7)
+
+    # --- Capteurs ---
+    for i, capteur in enumerate(capteurs):
+        ix, iy  = capteur["position"]
+        x_c, y_c = ix * h, iy * h
+        nom      = capteur.get("nom", f"C{i+1}")
+        ax.scatter(x_c, y_c, color=couleurs_c[i], s=100, zorder=5, marker="^")
+        ax.text(x_c + 0.5, y_c + 0.5, nom, color=couleurs_c[i], fontsize=10, fontweight="bold")
+
+    # --- Positions estimées ---
+    cmap   = plt.cm.plasma
+    colors = [cmap(k / max(len(positions_estimees_m) - 1, 1)) for k in range(len(positions_estimees_m))]
+    erreurs = []
+
+    for k, (pos_m, pos_r, couleur, t0) in enumerate(zip(positions_estimees_m, positions_reelles_impact, colors, t0_par_pulse)):
+        x_e, y_e = pos_m
+        x_r, y_r = pos_r
+        erreur    = np.linalg.norm(pos_m - np.array(pos_r))
+        erreurs.append(erreur)
+
+        ax.scatter(x_e, y_e, marker="*", color=couleur, s=250, zorder=6,
+                   edgecolors="black", linewidths=0.8,
+                   label=f"P{k+1} | t={t0:.2f}s | err={erreur:.1f}m")
+        ax.text(x_e + 0.5, y_e + 0.5, f"P{k+1}", color=couleur, fontsize=9, fontweight="bold")
+        ax.plot([x_r, x_e], [y_r, y_e], color=couleur, linestyle=":", linewidth=1.0, alpha=0.7)
+
+    # --- Trajectoire estimée ---
+    if len(positions_estimees_m) >= 2:
+        ax.plot(positions_estimees_m[:, 0], positions_estimees_m[:, 1],
+                color="orange", linestyle="-", linewidth=1.5,
+                alpha=0.8, label="Trajectoire estimée", zorder=4)
+
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=min(t0_par_pulse), vmax=max(t0_par_pulse)))
+    sm.set_array([])
+    plt.colorbar(sm, ax=ax, label="Temps d'émission [s]", shrink=0.6)
+
+    ax.set_xlim(0, L)
+    ax.set_ylim(0, L)
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    ax.set_aspect("equal")
+    ax.set_title(f"Évolution des positions estimées\nErreur moyenne : {np.mean(erreurs):.2f} m", fontsize=13)
+    ax.grid(True, alpha=0.4)
+    ax.legend(loc="upper right", fontsize=8)
+    plt.tight_layout()
+    plt.show()
+
+
+def estimer_vitesse(positions_estimees_m, t_impacts, objet):
+    """
+    positions_estimees_m : array[N_pulses, 2] déjà en mètres
+    t_impacts            : liste des temps d'impact [s]
+    objet                : dict avec "vitesse_m_s" pour comparaison
+    """
+    positions_estimees_m = np.array(positions_estimees_m)
+    t_impacts            = np.array(t_impacts)
+
+    if len(positions_estimees_m) < 2:
+        print("⚠ Pas assez de positions pour estimer la vitesse.")
+        return None, None
+
+    A = np.column_stack([t_impacts, np.ones(len(t_impacts))])
+
+    sol_x, _, _, _ = np.linalg.lstsq(A, positions_estimees_m[:, 0], rcond=None)
+    sol_y, _, _, _ = np.linalg.lstsq(A, positions_estimees_m[:, 1], rcond=None)
+
+    vx_estime, x0_estime = sol_x
+    vy_estime, y0_estime = sol_y
+    vitesse_estimee       = np.array([vx_estime, vy_estime])
+
+    print(f"\n{'='*45}")
+    print(f"  Estimation de la vitesse")
+    print(f"{'='*45}")
+    print(f"  vx estimé : {vx_estime:.2f} m/s")
+    print(f"  vy estimé : {vy_estime:.2f} m/s")
+    print(f"  ||v||     : {np.linalg.norm(vitesse_estimee):.2f} m/s")
+
+    # --- Comparaison avec vitesse réelle ---
+    if objet is not None and "vitesse_m_s" in objet:
+        vx_reel, vy_reel = objet["vitesse_m_s"]
+        vrai_v   = np.array([vx_reel, vy_reel])
+        erreur_v = np.linalg.norm(vitesse_estimee - vrai_v)
+        print(f"  vx réel   : {vx_reel:.2f} m/s")
+        print(f"  vy réel   : {vy_reel:.2f} m/s")
+        print(f"  Erreur    : {erreur_v:.2f} m/s")
+    print(f"{'='*45}")
+
+    # --- Graphique ---
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    t_fine    = np.linspace(t_impacts[0], t_impacts[-1], 100)
+
+    for ax, coord, sol, label in zip(
+        axes,
+        [positions_estimees_m[:, 0], positions_estimees_m[:, 1]],
+        [sol_x, sol_y],
+        ["x [m]", "y [m]"]
+    ):
+        v_est, p0_est = sol
+        ax.scatter(t_impacts, coord, color="blue", zorder=5, label="Positions estimées")
+        ax.plot(t_fine, v_est * t_fine + p0_est, color="red", linestyle="--",
+                label=f"Régression : v = {v_est:.2f} m/s")
+        ax.set_xlabel("Temps d'impact [s]")
+        ax.set_ylabel(label)
+        ax.set_title(f"Régression linéaire — {label}")
+        ax.legend()
+        ax.grid(True, alpha=0.4)
+
+    plt.suptitle("Estimation de la vitesse", fontsize=13)
+    plt.tight_layout()
+    plt.show()
+
+    return vitesse_estimee, (x0_estime, y0_estime)
 # =========================================================
 # EXEMPLE D'UTILISATION
 # =========================================================
