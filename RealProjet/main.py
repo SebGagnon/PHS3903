@@ -6,6 +6,9 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Circle, Rectangle
 import random
+from scipy.optimize import least_squares
+from scipy.signal import hilbert
+import time
 
 
 def creer_pml(nx, ny, epaisseur, puissance, gamma_max):
