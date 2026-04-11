@@ -1158,7 +1158,7 @@ def plot_positions_estimees(capteurs, positions_estimees_m, positions_reelles_im
     plt.show()
 
 
-def estimer_vitesse(positions_estimees_m, t_impacts, objet):
+def estimer_vitesse(positions_estimees_m, t_impacts, objet, show_vitesse = True):
     """
     positions_estimees_m : array[N_pulses, 2] déjà en mètres
     t_impacts            : liste des temps d'impact [s]
@@ -1196,7 +1196,8 @@ def estimer_vitesse(positions_estimees_m, t_impacts, objet):
         print(f"  vy réel   : {vy_reel:.2f} m/s")
         print(f"  Erreur    : {erreur_v:.2f} m/s")
     print(f"{'='*45}")
-
+    if not show_vitesse:
+        return vitesse_estimee, (x0_estime, y0_estime)
     # --- Graphique ---
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     t_fine    = np.linspace(t_impacts[0], t_impacts[-1], 100)
@@ -1227,7 +1228,7 @@ def estimer_vitesse(positions_estimees_m, t_impacts, objet):
 # =========================================================
 
 L = 1000
-t_total = 1
+t_total = 1.6
 nx = 300
 ny = 300
 
@@ -1252,18 +1253,18 @@ seed = 42
 capteurs = [
     {
         "nom": "Capteur 1",
-        "position": (100, 50),
+        "position": (200, 50),
         "emissions": [0.01]
     },
     {
         "nom": "Capteur 2",
-        "position": (50, 150),
-        "emissions": []
+        "position": (200, 150),
+        "emissions": [0.5]
     },
     {
         "nom": "Capteur 3",
         "position": (75, 150),
-        "emissions": []    },
+        "emissions": [1]    },
    
 ]
 
@@ -1272,13 +1273,14 @@ capteurs = [
 objet = {
     "forme": "cercle",              # "cercle" ou "rectangle"
     "centre_init_m": (500.0, 400.0),  # position initiale en mètres
-    "vitesse_m_s": (0.0, 0.0),     # vitesse (vx, vy) en m/s
+    "vitesse_m_s": (50.0, 0.0),     # vitesse (vx, vy) en m/s
      "rayon_m": 10.0,                 # pour un cercle
     # "taille_m": (10.0, 2.0),       # pour un rectangle
     "c_objet": 5200.0,              # vitesse du son dans l'objet
     "gamma_objet": 4000.0,          # amortissement dans l'objet
     "actif": True,
 }
+
 
 
 run_methode_multilateration = True
