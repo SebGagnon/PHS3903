@@ -1,3 +1,4 @@
+
 import matplotlib
 matplotlib.use("TkAgg")   # enlève cette ligne si ça marche déjà chez toi
 
@@ -140,8 +141,8 @@ def construire_pulses_depuis_capteurs(capteurs):
     return pulses
 
 
-def source_sonar_multi(nx, ny, t, pulse_data, sigma=1, f=400, A0=5e7, tau=0.001):
-    """Source totale en fonction des pulses."""
+def source_sonar_multi(nx, ny, t, pulse_data, sigma=1, A0=5e7, tau=0.001):
+    """Source totale gaussienne en espace et en temps, sans modulation fréquentielle."""
     x, y = np.meshgrid(np.arange(nx), np.arange(ny), indexing="ij")
     source = np.zeros((nx, ny))
 
@@ -149,32 +150,41 @@ def source_sonar_multi(nx, ny, t, pulse_data, sigma=1, f=400, A0=5e7, tau=0.001)
         r2 = (x - x0) ** 2 + (y - y0) ** 2
         enveloppe_spatiale = np.exp(-r2 / (2 * sigma**2))
         enveloppe_temporelle = np.exp(-((t - t0) ** 2) / (2 * tau**2))
-        source += A0 * enveloppe_spatiale * enveloppe_temporelle * np.sin(2 * np.pi * f * (t - t0))
+        source += A0 * enveloppe_spatiale * enveloppe_temporelle
 
     return source
 
+def source_sonar_multi_physique(X, Y, t, pulse_data_m, sigma_m=1.0, A0=5e7, tau=0.001):
+    """Source totale gaussienne en espace physique et en temps, sans modulation fréquentielle."""
+    source = np.zeros_like(X)
 
-def waveform_source_par_capteur(temps, capteurs, f_source=400, A0_source=5e7, tau_source=0.001):
-    """Retourne le signal émis par chaque capteur."""
+    for x0_m, y0_m, t0 in pulse_data_m:
+        r2 = (X - x0_m) ** 2 + (Y - y0_m) ** 2
+        enveloppe_spatiale = np.exp(-r2 / (2 * sigma_m**2))
+        enveloppe_temporelle = np.exp(-((t - t0) ** 2) / (2 * tau**2))
+        source += A0 * enveloppe_spatiale * enveloppe_temporelle
+
+    return source
+
+def waveform_source_par_capteur(temps, capteurs, A0_source=5e7, tau_source=0.001):
+    """Retourne le signal émis par chaque capteur, sans modulation fréquentielle."""
     signaux = {}
 
     for capteur in capteurs:
         signal = np.zeros_like(temps)
         for t0 in capteur["emissions"]:
             enveloppe_temporelle = np.exp(-((temps - t0) ** 2) / (2 * tau_source**2))
-            signal += A0_source * enveloppe_temporelle * np.sin(2 * np.pi * f_source * (temps - t0))
+            signal += A0_source * enveloppe_temporelle
         signaux[capteur["nom"]] = signal
 
     return signaux
 
-
-def afficher_waveform_source(t_total, dt, capteurs, f_source=400, A0_source=5e7, tau_source=0.001):
-    """Affiche les waveforms envoyés par les capteurs."""
+def afficher_waveform_source(t_total, dt, capteurs, A0_source=5e7, tau_source=0.001):
+    """Affiche les pulses envoyés par les capteurs."""
     temps = np.arange(0, t_total, dt)
     signaux = waveform_source_par_capteur(
         temps,
         capteurs,
-        f_source=f_source,
         A0_source=A0_source,
         tau_source=tau_source
     )
@@ -191,7 +201,7 @@ def afficher_waveform_source(t_total, dt, capteurs, f_source=400, A0_source=5e7,
         else:
             plt.plot([], [], color=couleur, label=f"{nom} (silencieux)")
 
-    plt.title("Waveforms envoyés par capteur")
+    plt.title("Pulses envoyés par capteur")
     plt.xlabel("Temps [s]")
     plt.ylabel("Amplitude")
     plt.grid(True)
@@ -426,7 +436,6 @@ def run_simul(
     t_depart_pulses=0.01,
     dt_pulse=0.03,
     sigma_source=1,
-    f_source=400,
     A0_source=5e7,
     tau_source=0.001,
     objet=None,
@@ -481,13 +490,12 @@ def run_simul(
 
     if afficher_waveform_flag:
         afficher_waveform_source(
-            t_total=t_total,
-            dt=dt,
-            capteurs=capteurs,
-            f_source=f_source,
-            A0_source=A0_source,
-            tau_source=tau_source,
-        )
+        t_total=t_total,
+        dt=dt,
+        capteurs=capteurs,
+        A0_source=A0_source,
+        tau_source=tau_source,
+    )
 
     X, Y = creer_maillage_physique(nx, ny, h)
 
@@ -523,7 +531,6 @@ def run_simul(
             t=t_n,
             pulse_data=pulses,
             sigma=sigma_source,
-            f=f_source,
             A0=A0_source,
             tau=tau_source
         )
@@ -624,7 +631,6 @@ def methode_multilateration():
     t_depart_pulses=0.01,
     dt_pulse=0.01,
     sigma_source=sigma_source,
-    f_source=f_source,
     A0_source=A0_source,
     tau_source=tau_source,
     objet=objet_loin,
@@ -652,7 +658,6 @@ def methode_multilateration():
     t_depart_pulses=0.01,
     dt_pulse=0.01,
     sigma_source=sigma_source,
-    f_source=f_source,
     A0_source=A0_source,
     tau_source=tau_source,
     objet=objet,
@@ -1232,21 +1237,20 @@ def estimer_vitesse(positions_estimees_m, t_impacts, objet, show_vitesse = True)
 
 L = 1000
 t_total = 1.6
-nx = 300
-ny = 300
+nx = 250
+ny = 250
 
 rho = 1000
 kappa = 2.2e9
 cfl = 1
 
-epaisseur_pml_ratio = 0.2
-puissance_pml = 2
-gamma_max = 3000
+epaisseur_pml_ratio = 0.25
+puissance_pml = 0.2
+gamma_max = 55
 
 sigma_source = 1
-f_source = 1
-A0_source = 8e10
-tau_source = 0.001
+A0_source = 8e9
+tau_source = 0.005
 nb_frames = 100
 seed = 42
 
@@ -1256,17 +1260,17 @@ seed = 42
 capteurs = [
     {
         "nom": "Capteur 1",
-        "position": (200, 50),
+        "position": (150, 150),
         "emissions": [0.01]
     },
     {
         "nom": "Capteur 2",
-        "position": (200, 150),
+        "position": (75, 100),
         "emissions": [0.5]
     },
     {
         "nom": "Capteur 3",
-        "position": (75, 150),
+        "position": (186, 150),
         "emissions": [1]    },
    
 ]
@@ -1276,7 +1280,7 @@ capteurs = [
 objet = {
     "forme": "cercle",              # "cercle" ou "rectangle"
     "centre_init_m": (500.0, 400.0),  # position initiale en mètres
-    "vitesse_m_s": (50.0, 0.0),     # vitesse (vx, vy) en m/s
+    "vitesse_m_s": (50.0, 150.0),     # vitesse (vx, vy) en m/s
      "rayon_m": 10.0,                 # pour un cercle
     # "taille_m": (10.0, 2.0),       # pour un rectangle
     "c_objet": 5200.0,              # vitesse du son dans l'objet
@@ -1309,7 +1313,6 @@ else:
     t_depart_pulses=0.01,
     dt_pulse=0.01,
     sigma_source=sigma_source,
-    f_source=f_source,
     A0_source=A0_source,
     tau_source=tau_source,
     objet=objet,
