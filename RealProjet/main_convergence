@@ -6,7 +6,7 @@ import random
 from scipy.optimize import least_squares
 from scipy.signal import hilbert
 import time
-
+import json
 
 
 def creer_pml(nx, ny, epaisseur, puissance, gamma_max):
@@ -1138,6 +1138,29 @@ def generer_position_objet(params_simul, capteurs, distance_min_capteur_m):
             print(f"  Distances aux capteurs : {distances.round(1)} m")
             return (x, y)
 
+
+def sauvegarder_resultats(resultats, path):
+    """Sauvegarde les résultats en JSON en gérant les types numpy."""
+    
+    def convert(obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, (np.float32, np.float64)):
+            return float(obj)
+        if isinstance(obj, (np.int32, np.int64)):
+            return int(obj)
+        return obj
+
+    # Nettoyer les résultats pour JSON
+    resultats_clean = []
+    for r in resultats:
+        resultats_clean.append({k: convert(v) for k, v in r.items()})
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(resultats_clean, f, indent=4, ensure_ascii=False)
+
+    print(f"\n  ✓ Résultats sauvegardés : {path}")
+
 # ============================================================
 #          ANALYSE DE CONVERGENCE DU MAILLAGE
 # ============================================================
@@ -1274,12 +1297,29 @@ def analyse_convergence_maillage(nx_list, capteurs_template, objet, t_total, L,
 
     fig, axes = plt.subplots(1, 3, figsize=(16, 5))
 
-    # Temps de calcul
-    axes[0].plot(nx_vals, t_vals, "o-", color="blue")
+    # --- Passage en log ---
+    log_nx = np.log(nx_vals)
+    log_t  = np.log(t_vals)
+
+    # --- Fit linéaire ---
+    b, log_a = np.polyfit(log_nx, log_t, 1)
+    a = np.exp(log_a)
+
+    print(f"Exposant b = {b:.3f}")
+    print(f"Coefficient a = {a:.3e}")
+
+    # --- Courbe fit ---
+    nx_fit = np.linspace(min(nx_vals), max(nx_vals), 100)
+    t_fit  = a * nx_fit**b
+
+    # --- Plot log-log ---
+    axes[0].loglog(nx_vals, t_vals, "o", label="Données")
+    axes[0].loglog(nx_fit, t_fit, "-", label=f"Fit: t = {a:.2e} nx^{b:.2f}")
+
     axes[0].set_xlabel("Résolution nx")
     axes[0].set_ylabel("Temps moyen [s]")
-    axes[0].set_title("Temps de calcul vs résolution")
-    axes[0].grid(True, alpha=0.4)
+    axes[0].legend()
+    axes[0].grid(True, which="both", alpha=0.4)
 
     # Erreur vs nx avec barres d'erreur
     valides = [(nx, e, s) for nx, e, s in zip(nx_vals, err_moy, err_std) if e is not None]
@@ -1289,9 +1329,8 @@ def analyse_convergence_maillage(nx_list, capteurs_template, objet, t_total, L,
                          capsize=5, label=f"Moy ± std ({n_simulations_par_nx} sims)")
         axes[1].set_xlabel("Résolution nx")
         axes[1].set_ylabel("Erreur moyenne [m]")
-        axes[1].set_title("Erreur de localisation vs résolution")
         axes[1].legend()
-        axes[1].grid(True, alpha=0.4)
+        axes[1].grid(False, alpha=0.4)
 
     # Erreur vs h
     valides_h = [(h, e, s) for h, e, s in zip(h_vals, err_moy, err_std) if e is not None]
@@ -1301,14 +1340,202 @@ def analyse_convergence_maillage(nx_list, capteurs_template, objet, t_total, L,
                          capsize=5, label=f"Moy ± std ({n_simulations_par_nx} sims)")
         axes[2].set_xlabel("Taille de maille h [m]")
         axes[2].set_ylabel("Erreur moyenne [m]")
-        axes[2].set_title("Erreur de localisation vs h")
         axes[2].invert_xaxis()
         axes[2].legend()
-        axes[2].grid(True, alpha=0.4)
+        axes[2].grid(False, alpha=0.4)
 
     plt.suptitle(f"Analyse de convergence ({n_simulations_par_nx} simulations par maillage)", fontsize=13)
     plt.tight_layout()
-    plt.show()
+
+    sauvegarder_resultats(
+        resultats,
+        path=r"C:\Users\Arnaud\OneDrive - polymtl\Projet 3\data_maillage.json"
+    )
+
+    return resultats
+
+
+def analyse_cfl(cfl_list, capteurs_template, objet, t_total, L,
+                rho, kappa, nx, ny, epaisseur_pml_ratio,
+                puissance_pml, gamma_max, sigma_source,
+                f_source, A0_source, tau_source,
+                distance_min_capteur_m=100,
+                n_simulations_par_cfl=3):
+    """
+    Analyse l'effet du CFL sur l'erreur de localisation et le temps de calcul.
+
+    cfl_list               : liste des valeurs CFL à tester (ex: [0.3, 0.5, 0.7, 0.9])
+    n_simulations_par_cfl  : nombre de positions aléatoires testées par CFL
+    """
+
+    resultats = []
+    h = L / nx
+
+    # --- Adapter les capteurs ---
+    capteurs_test = []
+    for cap in capteurs_template:
+        fx, fy = cap["position_rel"]
+        capteurs_test.append({
+            "nom"      : cap["nom"],
+            "position" : (int(fx * nx), int(fy * ny)),
+            "emissions": cap["emissions"]
+        })
+
+    for cfl_test in cfl_list:
+
+        # Calcul du dt correspondant
+        c_eau  = np.sqrt(kappa / rho)
+        c_max  = objet["c_objet"]
+        dt_max = h / (max(c_eau, c_max) * np.sqrt(2))
+        dt_test = cfl_test * dt_max
+        nt_test = int(t_total / dt_test)
+
+        print(f"\n{'='*50}")
+        print(f"  CFL = {cfl_test:.2f}  →  dt = {dt_test:.2e} s  |  nt = {nt_test}")
+        print(f"{'='*50}")
+
+        params_test = dict(
+            L=L, t_total=t_total, nx=nx, ny=ny,
+            rho=rho, kappa=kappa, cfl=cfl_test,
+            epaisseur_pml_ratio=epaisseur_pml_ratio,
+            puissance_pml=puissance_pml, gamma_max=gamma_max,
+            capteurs=capteurs_test,
+            sigma_source=sigma_source, f_source=f_source,
+            A0_source=A0_source, tau_source=tau_source,
+        )
+
+        erreurs_cfl = []
+        temps_cfl   = []
+
+        for i_sim in range(n_simulations_par_cfl):
+
+            print(f"\n  --- Simulation {i_sim+1}/{n_simulations_par_cfl} ---")
+
+            centre_init = generer_position_objet(
+                params_simul           = params_test,
+                capteurs               = capteurs_test,
+                distance_min_capteur_m = distance_min_capteur_m
+            )
+            objet_sim = {**objet, "centre_init_m": centre_init}
+
+            t_debut = time.time()
+
+            try:
+                intensite_echo, t_hist, c_eau_sim, h_sim = methode_multilateration(
+                    params_simul           = params_test,
+                    objet                  = objet_sim,
+                    afficher_animation     = False,
+                    afficher_capteurs_flag = False,
+                )
+
+                t_calcul = time.time() - t_debut
+                temps_cfl.append(t_calcul)
+                print(f"  Temps de calcul : {t_calcul:.2f} s")
+
+                plages        = get_plages_pulses(capteurs_test, t_total)
+                erreurs_pulse = []
+
+                for idx_emit, t_debut_plage, t_fin_plage in plages:
+                    try:
+                        pos_m, _, distances, idx_emit_retour = multilateration_un_pulse(
+                            intensite_echo, t_hist, capteurs_test, c_eau_sim,
+                            idx_emetteur  = idx_emit,
+                            t_debut_plage = t_debut_plage,
+                            t_fin_plage   = t_fin_plage,
+                            h             = h_sim
+                        )
+                        position_impact_m, _ = calc_position_reelle_impact(
+                            objet      = objet_sim,
+                            t0_emit    = t_debut_plage,
+                            d_emetteur = distances[idx_emit_retour],
+                            c_eau      = c_eau_sim
+                        )
+                        erreur = np.linalg.norm(pos_m - position_impact_m)
+                        erreurs_pulse.append(erreur)
+                        print(f"    Pulse [{t_debut_plage:.3f}s] → erreur = {erreur:.2f} m")
+
+                    except ValueError as e:
+                        print(f"    ⚠ Pulse ignoré : {e}")
+
+                if erreurs_pulse:
+                    erreurs_cfl.append(np.mean(erreurs_pulse))
+
+            except Exception as e:
+                print(f"  ⚠ Simulation ignorée : {e}")
+
+        erreur_moy = np.mean(erreurs_cfl) if erreurs_cfl else None
+        erreur_std = np.std(erreurs_cfl)  if erreurs_cfl else None
+        t_moy      = np.mean(temps_cfl)   if temps_cfl   else None
+
+        print(f"\n  Résultats CFL={cfl_test:.2f} ({len(erreurs_cfl)} simulations valides)")
+        print(f"  Erreur moyenne : {erreur_moy:.2f} ± {erreur_std:.2f} m" if erreur_moy else "  Aucune erreur")
+        print(f"  Temps moyen    : {t_moy:.2f} s"                          if t_moy      else "  Aucun temps")
+
+        resultats.append({
+            "cfl"       : cfl_test,
+            "dt"        : dt_test,
+            "nt"        : nt_test,
+            "t_moy"     : t_moy,
+            "erreur_moy": erreur_moy,
+            "erreur_std": erreur_std,
+            "erreurs"   : erreurs_cfl,
+            "temps"     : temps_cfl,
+        })
+
+    # --- Graphiques ---
+    cfl_vals = [r["cfl"]        for r in resultats]
+    dt_vals  = [r["dt"]         for r in resultats]
+    nt_vals  = [r["nt"]         for r in resultats]
+    t_vals   = [r["t_moy"]      for r in resultats]
+    err_moy  = [r["erreur_moy"] for r in resultats]
+    err_std  = [r["erreur_std"] for r in resultats]
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+
+    # Temps de calcul vs CFL
+    axes[0].plot(cfl_vals, t_vals, "o-", color="blue")
+    axes[0].set_xlabel("CFL")
+    axes[0].set_ylabel("Temps moyen [s]")
+    axes[0].set_title("Temps de calcul vs CFL")
+    axes[0].grid(True, alpha=0.4)
+
+    # Ajouter nt sur axe secondaire
+    ax2 = axes[0].twinx()
+    ax2.plot(cfl_vals, nt_vals, "s--", color="cyan", alpha=0.6)
+    ax2.set_ylabel("nt (nombre de pas de temps)", color="cyan")
+
+    # Erreur vs CFL
+    valides = [(c, e, s) for c, e, s in zip(cfl_vals, err_moy, err_std) if e is not None]
+    if valides:
+        c_v, e_v, s_v = zip(*valides)
+        axes[1].errorbar(c_v, e_v, yerr=s_v, fmt="o-", color="red",
+                         capsize=5, label=f"Moy ± std ({n_simulations_par_cfl} sims)")
+        axes[1].set_xlabel("CFL")
+        axes[1].set_ylabel("Erreur moyenne [m]")
+        axes[1].set_title("Erreur de localisation vs CFL")
+        axes[1].legend()
+        axes[1].grid(True, alpha=0.4)
+
+    # Erreur vs dt
+    valides_dt = [(d, e, s) for d, e, s in zip(dt_vals, err_moy, err_std) if e is not None]
+    if valides_dt:
+        d_v, e_v2, s_v2 = zip(*valides_dt)
+        axes[2].errorbar(d_v, e_v2, yerr=s_v2, fmt="o-", color="green",
+                         capsize=5, label=f"Moy ± std ({n_simulations_par_cfl} sims)")
+        axes[2].set_xlabel("dt [s]")
+        axes[2].set_ylabel("Erreur moyenne [m]")
+        axes[2].set_title("Erreur de localisation vs dt")
+        axes[2].invert_xaxis()  # dt décroissant = plus précis
+        axes[2].legend()
+        axes[2].grid(True, alpha=0.4)
+
+    plt.suptitle(f"Analyse CFL ({n_simulations_par_cfl} simulations par valeur)", fontsize=13)
+    plt.tight_layout()
+
+    sauvegarder_resultats(
+        resultats,
+        path=r"C:\Users\Arnaud\OneDrive - polymtl\Projet 3\data_cfl.json"
+    )
 
     return resultats
 
@@ -1409,13 +1636,32 @@ def run_convergence(params_simul, objet, affichage):
     ]
 
     analyse_convergence_maillage(
-        nx_list                = [50, 100, 150, 200, 250, 300, 350, 400],
+        nx_list                = [50, 100, 150, 200, 250, 300, 350, 400, 450, 500],
         capteurs_template      = capteurs_template,
         objet                  = objet,
         distance_min_capteur_m = 100,
-        n_simulations_par_nx   = 5,       # ← nombre de positions aléatoires par maillage
+        n_simulations_par_nx   = 10,       # ← nombre de positions aléatoires par maillage
         **{k: v for k, v in params_simul.items()
            if k not in ["nx", "ny", "capteurs", "nb_frames", "seed"]},
+    )
+
+
+def run_analyse_cfl(params_simul, objet, affichage):
+        
+    capteurs_template = [
+        {"nom": "Capteur 1", "position_rel": (0.75, 0.30), "emissions": [0.01]},
+        {"nom": "Capteur 2", "position_rel": (0.65, 0.75), "emissions": []},
+        {"nom": "Capteur 3", "position_rel": (0.375, 0.25), "emissions": []},
+    ]
+
+    analyse_cfl(
+        cfl_list               = [0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4],
+        capteurs_template      = capteurs_template,
+        objet                  = objet,
+        distance_min_capteur_m = 100,
+        n_simulations_par_cfl  = 10,
+        **{k: v for k, v in params_simul.items()
+           if k not in ["cfl", "capteurs", "nb_frames", "seed"]},
     )
 # =========================================================
 # EXEMPLE D'UTILISATION
@@ -1428,7 +1674,7 @@ ny = 300
 
 rho = 1000
 kappa = 2.2e9
-cfl = 1
+cfl = 0.9
 
 epaisseur_pml_ratio = 0.2
 puissance_pml = 2
@@ -1517,12 +1763,16 @@ affichage = dict(
 run_simulation_simple       = False
 run_methode_multilateration = False
 run_analyse_convergence     = True
+run_analyse_CFL             = False
 
 # =========================================================
 #          POSITION ALÉATOIRE DE L'OBJET
 # =========================================================
-position_aleatoire  = False
+position_aleatoire  = True
+
+
 distance_min_capteur_m = 100  # [m]
+
 
 # =========================================================
 #                        MAIN
@@ -1535,4 +1785,7 @@ elif run_methode_multilateration:
 
 elif run_analyse_convergence:
     run_convergence(params_simul, objet, affichage)
+
+elif run_analyse_CFL:
+    run_analyse_cfl(params_simul, objet, affichage)
 
