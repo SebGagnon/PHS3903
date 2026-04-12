@@ -595,36 +595,31 @@ def methode_multilateration(params_simul, objet,
                              afficher_animation=False,
                              afficher_capteurs_flag=False):
 
-    objet_loin = {**objet,
-                  "centre_init_m": (0.0, 0.0),
-                  "vitesse_m_s"  : (0.0, 0.0),
-                  "rayon_m"      : 0.0}
+    objet_loin = {**objet, "centre_init_m": (0.0, 0.0), 
+                  "vitesse_m_s": (0.0, 0.0), "rayon_m": 0.0}
 
     resultats_sans = run_simul(
-        **params_simul,
-        objet                  = objet_loin,
-        afficher_pml_flag      = False,
-        afficher_waveform_flag = False,
-        afficher_animation     = afficher_animation,
-        afficher_capteurs_flag = afficher_capteurs_flag,
+        **params_simul, objet=objet_loin,
+        afficher_pml_flag=False, afficher_waveform_flag=False,
+        afficher_animation=afficher_animation,
+        afficher_capteurs_flag=afficher_capteurs_flag,
     )
     resultats_avec = run_simul(
-        **params_simul,
-        objet                  = objet,
-        afficher_pml_flag      = False,
-        afficher_waveform_flag = False,
-        afficher_animation     = afficher_animation,
-        afficher_capteurs_flag = afficher_capteurs_flag,
+        **params_simul, objet=objet,
+        afficher_pml_flag=False, afficher_waveform_flag=False,
+        afficher_animation=afficher_animation,
+        afficher_capteurs_flag=afficher_capteurs_flag,
     )
 
-    t_hist       = resultats_avec["temps"]
-    c_eau        = resultats_avec["c_eau"]
+    t_hist        = resultats_avec["temps"]
+    c_eau         = resultats_avec["c_eau"]
+    h             = resultats_avec["h"]       
     intensite_echo = np.array([
         resultats_avec["signaux_capteurs"][i] - resultats_sans["signaux_capteurs"][i]
         for i in range(len(resultats_avec["signaux_capteurs"]))
     ])
 
-    return intensite_echo, t_hist, c_eau
+    return intensite_echo, t_hist, c_eau, h  
 
 
 def get_plages_pulses(capteurs, t_total):
@@ -760,19 +755,21 @@ def show_echo(intensite_echo, t_hist, capteurs, t_total, Echo = True):
 
 
 def multilateration_un_pulse(intensite_echos, t_hist, capteurs, c_eau,
-                              idx_emetteur=0, t_debut_plage=None, t_fin_plage=None):
-    """
-    intensite_echos : array [N_capteurs, N_temps]
-    capteurs        : liste de dicts avec champ "position" en noeuds
-    c_eau           : vitesse du son dans l'eau [m/s]
-    idx_emetteur    : index du capteur émetteur
-    """
+                              idx_emetteur=0, t_debut_plage=None,
+                              t_fin_plage=None, h=None, L=None):
 
-    intensite_echos = np.array(intensite_echos)
-    n_capteurs      = len(capteurs)
-    h               = L / nx  # taille d'un noeud [m]
+    # --- h prioritaire sur tout ---
+    if h is None:
+        if L is not None:
+            nx_local = len(intensite_echos[0])
+            h = L / nx_local
+        else:
+            raise ValueError("Il faut fournir h ou L à multilateration_un_pulse")
 
-    # --- Positions des capteurs en mètres ---
+    intensite_echos          = np.array(intensite_echos)
+    n_capteurs               = len(capteurs)
+
+    # --- Positions des capteurs en mètres avec h local ---
     positions_m = np.array([
         [capteur["position"][0] * h, capteur["position"][1] * h]
         for capteur in capteurs
@@ -793,18 +790,15 @@ def multilateration_un_pulse(intensite_echos, t_hist, capteurs, c_eau,
     temps_echo = np.array(temps_echo)
     t0_emit    = t_debut_plage if t_debut_plage is not None else 0.0
 
-    # -------- DISTANCES en mètres --------
-    # Émetteur : aller-retour
-    d_emetteur = c_eau * (temps_echo[idx_emetteur] - t0_emit) / 2  # [m]
+    # -------- DISTANCES en mètres avec h local --------
+    d_emetteur = c_eau * (temps_echo[idx_emetteur] - t0_emit) / 2
 
-    # Récepteurs : trajet total - aller
     indices_recepteurs = [i for i in range(n_capteurs) if i != idx_emetteur]
     d_recepteurs = {
         i: c_eau * (temps_echo[i] - t0_emit) - d_emetteur
         for i in indices_recepteurs
     }
 
-    # Assemblage distances en mètres
     distances               = np.zeros(n_capteurs)
     distances[idx_emetteur] = d_emetteur
     for i in indices_recepteurs:
@@ -820,7 +814,6 @@ def multilateration_un_pulse(intensite_echos, t_hist, capteurs, c_eau,
     x0  = np.mean(positions_m, axis=0)
     sol = least_squares(residuals, x0)
 
-    # position estimée en mètres
     return sol.x, temps_echo, distances, idx_emetteur
 
 
@@ -1210,12 +1203,12 @@ def analyse_convergence_maillage(nx_list, capteurs_template, objet, t_total, L,
             t_debut = time.time()
 
             try:
-                intensite_echo, t_hist, c_eau = methode_multilateration(
+                intensite_echo, t_hist, c_eau, h = methode_multilateration(
                     params_simul           = params_test,
                     objet                  = objet_sim,
                     afficher_animation     = False,
                     afficher_capteurs_flag = False,
-                )
+)
 
                 t_calcul = time.time() - t_debut
                 temps_nx.append(t_calcul)
@@ -1231,7 +1224,8 @@ def analyse_convergence_maillage(nx_list, capteurs_template, objet, t_total, L,
                             intensite_echo, t_hist, capteurs_test, c_eau,
                             idx_emetteur  = idx_emit,
                             t_debut_plage = t_debut_plage,
-                            t_fin_plage   = t_fin_plage
+                            t_fin_plage   = t_fin_plage,
+                            h  = h_test
                         )
                         position_impact_m, _ = calc_position_reelle_impact(
                             objet      = objet_sim,
@@ -1342,13 +1336,12 @@ def run_simulation(params_simul, objet, affichage):
 def run_multilateration(params_simul, objet, capteurs, affichage):
 
     # --- Simulations ---
-    intensite_echo, t_hist, c_eau = methode_multilateration(
+    intensite_echo, t_hist, c_eau, h = methode_multilateration(
         params_simul           = params_simul,
         objet                  = objet,
         afficher_animation     = affichage["animation"],
         afficher_capteurs_flag = affichage["capteurs"],
-    )
-
+)
     if affichage["echo"]:
         show_echo(intensite_echo, t_hist, capteurs, t_total)
 
@@ -1365,7 +1358,10 @@ def run_multilateration(params_simul, objet, capteurs, affichage):
         try:
             pos_m, _, distances, idx_emit_retour = multilateration_un_pulse(
                 intensite_echo, t_hist, capteurs, c_eau,
-                idx_emetteur=idx_emit, t_debut_plage=t_debut_plage, t_fin_plage=t_fin_plage
+                idx_emetteur  = idx_emit,
+                t_debut_plage = t_debut_plage,
+                t_fin_plage   = t_fin_plage,
+                h             = h   # ← h correct pour ce maillage
             )
             position_impact_m, t_impact = calc_position_reelle_impact(
                 objet=objet, t0_emit=t_debut_plage,
@@ -1413,11 +1409,11 @@ def run_convergence(params_simul, objet, affichage):
     ]
 
     analyse_convergence_maillage(
-        nx_list                = [50, 100, 150, 200, 250, 300, 350],
+        nx_list                = [50, 100, 150, 200, 250, 300, 350, 400],
         capteurs_template      = capteurs_template,
         objet                  = objet,
         distance_min_capteur_m = 100,
-        n_simulations_par_nx   = 10,       # ← nombre de positions aléatoires par maillage
+        n_simulations_par_nx   = 5,       # ← nombre de positions aléatoires par maillage
         **{k: v for k, v in params_simul.items()
            if k not in ["nx", "ny", "capteurs", "nb_frames", "seed"]},
     )
@@ -1426,9 +1422,9 @@ def run_convergence(params_simul, objet, affichage):
 # =========================================================
 
 L = 1000
-t_total = 0.8
-nx = 200
-ny = 200
+t_total = 1
+nx = 300
+ny = 300
 
 rho = 1000
 kappa = 2.2e9
@@ -1472,7 +1468,7 @@ objet = {
     "forme": "cercle",              # "cercle" ou "rectangle"
     "centre_init_m": (500.0, 400.0),  # position initiale en mètres
     "vitesse_m_s": (0, 0.0),     # vitesse (vx, vy) en m/s
-     "rayon_m": 10.0,                 # pour un cercle
+     "rayon_m": 20.0,                 # pour un cercle
     # "taille_m": (10.0, 2.0),       # pour un rectangle
     "c_objet": 5200.0,              # vitesse du son dans l'objet
     "gamma_objet": 4000.0,          # amortissement dans l'objet
@@ -1507,7 +1503,7 @@ params_simul = dict(
 affichage = dict(
     pml            = False,
     waveform       = False,
-    animation      = False,
+    animation      = True,
     capteurs       = False,
     echo           = True,
     localisation   = True,
@@ -1525,7 +1521,7 @@ run_analyse_convergence     = True
 # =========================================================
 #          POSITION ALÉATOIRE DE L'OBJET
 # =========================================================
-position_aleatoire  = True
+position_aleatoire  = False
 distance_min_capteur_m = 100  # [m]
 
 # =========================================================
