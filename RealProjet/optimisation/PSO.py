@@ -483,154 +483,75 @@ seed = None
 
 
 
-# Bornes optimisation bayésienne
+# Bornes PSO
 
-seed_bo = 123
-n_trials = 5
-
-base_nom = f"bo_pml_gp_trials{n_trials}_seed{seed_bo}"
-nom_fichier_checkpoint = base_nom + "_checkpoint.pkl"
-nom_fichier_sauvegarde = base_nom + "_final.pkl"
-nom_etude = base_nom
+lb = [0.05, 50.0, 0.5]       # [epaisseur_pml_ratio, gamma_max, puissance_pml]
+ub = [0.25, 10000.0, 6.0]
 
 
-def objectif_pml_moyen_optuna(trial):
-    """
-    Version Optuna de la fonction objectif.
-    """
-    global historique_evaluations, compteur_evaluations
 
-    epaisseur_ratio = trial.suggest_float("epaisseur_pml_ratio", 0.05, 0.25)
-    gamma_max_local = trial.suggest_float("gamma_max", 50.0, 10000.0, log=True)
-    puissance_pml_local = trial.suggest_float("puissance_pml", 0.5, 6.0)
+# Lancement du PSO
 
-    seeds = [0, 1, 2, 3, 4,5,6,7,8,9]
-    scores = []
+w = 0.8
+c1 = 1.5
+c2 = 1.5
+pop = 15
+max_iter = 15
 
-    for seed_local in seeds:
-        resultats = run_simul(
-            L=L,
-            t_total=t_total,
-            nx=nx,
-            ny=ny,
-            rho=rho,
-            kappa=kappa,
-            cfl=cfl,
-            epaisseur_pml_ratio=float(epaisseur_ratio),
-            puissance_pml=float(puissance_pml_local),
-            gamma_max=float(gamma_max_local),
-            nb_pulses=nb_pulses,
-            t_depart_pulses=t_depart_pulses,
-            dt_pulse=dt_pulse,
-            sigma_source=sigma_source,
-            A0_source=A0_source,
-            tau_source=tau_source,
-            nb_frames=1,
-            afficher_pml_flag=False,
-            afficher_waveform_flag=False,
-            afficher_animation=False,
-            afficher_capteurs_flag=False,
-            seed=seed_local,
-        )
-
-        score = resultats["pourcentage_residuel"]
-
-        if score is None or not np.isfinite(score):
-            score = 1e12
-
-        scores.append(float(score))
-
-    score_moyen = float(np.mean(scores))
-    compteur_evaluations += 1
-
-    entree = {
-        "evaluation": compteur_evaluations,
-        "timestamp": time.time(),
-        "epaisseur_pml_ratio": float(epaisseur_ratio),
-        "epaisseur_pml_noeuds": int(float(epaisseur_ratio) * nx),
-        "gamma_max": float(gamma_max_local),
-        "puissance_pml": float(puissance_pml_local),
-        "scores_par_seed": scores,
-        "score_moyen": score_moyen,
-        "trial_number": trial.number,
-    }
-
-    historique_evaluations.append(entree)
-
-    if compteur_evaluations % 5 == 0:
-        sauvegarder_etat_pso(
-            nom_fichier_checkpoint,
-            {
-                "type": "checkpoint",
-                "historique_evaluations": historique_evaluations,
-                "compteur_evaluations": compteur_evaluations,
-            }
-        )
-        print(f"Sauvegarde intermédiaire : {compteur_evaluations} évaluations")
-
-    return score_moyen
-
-
-sampler = optuna.samplers.GPSampler(
-    seed=seed_bo,
-    n_startup_trials=10,
-    deterministic_objective=True,
+nom_fichier_sauvegarde = (
+    f"pso_pml_w{str(w).replace('.', 'p')}"
+    f"_c1{str(c1).replace('.', 'p')}"
+    f"_c2{str(c2).replace('.', 'p')}"
+    f"_pop{str(pop)}"
+    f"_max_iter{str(max_iter)}.pkl"
 )
 
-study = optuna.create_study(
-    study_name=nom_etude,
-    direction="minimize",
-    sampler=sampler,
-    storage=f"sqlite:///{nom_etude}.db",
-    load_if_exists=True,
+pso = PSO(
+    func=objectif_pml_moyen,
+    n_dim=3,
+    pop=12,
+    max_iter=12,
+    lb=lb,
+    ub=ub,
+    w=w,
+    c1=c1,
+    c2=c2
 )
 
-study.optimize(objectif_pml_moyen_optuna, n_trials=n_trials)
+best_x, best_y = pso.run()
 
-best_params = study.best_params
-best_value = float(study.best_value)
-
-best_epaisseur_ratio = float(best_params["epaisseur_pml_ratio"])
-best_gamma_max = float(best_params["gamma_max"])
-best_puissance = float(best_params["puissance_pml"])
-best_score = best_value
-
-# historique du meilleur score au fil des essais
-gbest_y_hist = []
-best_so_far = np.inf
-for tr in study.trials:
-    if tr.value is not None and np.isfinite(tr.value):
-        best_so_far = min(best_so_far, float(tr.value))
-        gbest_y_hist.append(best_so_far)
+best_epaisseur_ratio = float(best_x[0])
+best_gamma_max = float(best_x[1])
+best_puissance = float(best_x[2])
+best_score = float(np.array(best_y).reshape(-1)[0])
 
 # sauvegarde finale complète
 sauvegarder_etat_pso(
     nom_fichier_sauvegarde,
     {
-        "type": "final",
+        "w": w,
+        "c1": c1,
+        "c2": c2,
         "historique_evaluations": historique_evaluations,
         "compteur_evaluations": compteur_evaluations,
-        "best_params": best_params,
+        "best_x": best_x,
+        "best_y": best_y,
         "best_epaisseur_ratio": best_epaisseur_ratio,
         "best_epaisseur_noeuds": int(best_epaisseur_ratio * nx),
         "best_gamma_max": best_gamma_max,
         "best_puissance": best_puissance,
         "best_score": best_score,
-        "gbest_y_hist": gbest_y_hist,
-        "study_name": nom_etude,
-        "storage": f"sqlite:///{nom_etude}.db",
-        "sampler": "GPSampler",
-        "n_trials": n_trials,
-        "seed_bo": seed_bo,
+        "gbest_y_hist": pso.gbest_y_hist,
     }
 )
 
 print("\nSauvegarde finale écrite dans :", nom_fichier_sauvegarde)
 
-afficher_convergence_pso(gbest_y_hist)
+afficher_convergence_pso(pso.gbest_y_hist)
 
 
 # Validation finale avec affichage
+
 
 resultats_best = run_simul(
     L=L,
