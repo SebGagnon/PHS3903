@@ -1236,21 +1236,21 @@ def estimer_vitesse(positions_estimees_m, t_impacts, objet, show_vitesse = True)
 # =========================================================
 
 L = 1000
-t_total = 1.6
-nx = 250
-ny = 250
+t_total = 3
+nx = 300
+ny = 300
 
 rho = 1000
 kappa = 2.2e9
-cfl = 1
+cfl = 0.4
 
-epaisseur_pml_ratio = 0.25
-puissance_pml = 0.2
-gamma_max = 55
+epaisseur_pml_ratio = 0.2
+puissance_pml = 0.535763
+gamma_max = 40
 
-sigma_source = 1
-A0_source = 8e9
-tau_source = 0.005
+sigma_source = 2
+A0_source = 1e6
+tau_source = 0.003
 nb_frames = 100
 seed = 42
 
@@ -1260,18 +1260,18 @@ seed = 42
 capteurs = [
     {
         "nom": "Capteur 1",
-        "position": (150, 150),
+        "position": (795, 205),
         "emissions": [0.01]
     },
     {
         "nom": "Capteur 2",
-        "position": (75, 100),
-        "emissions": [0.5]
+        "position": (5, 100),
+        "emissions": [1]
     },
     {
         "nom": "Capteur 3",
         "position": (186, 150),
-        "emissions": [1]    },
+        "emissions": [1.75]    },
    
 ]
 
@@ -1290,7 +1290,7 @@ objet = {
 
 
 
-run_methode_multilateration = True
+run_methode_multilateration = False
 
 if run_methode_multilateration:
     methode_multilateration() # Modifier les paramètres d'affichage dans la fonction methode_multilateration
@@ -1317,7 +1317,7 @@ else:
     tau_source=tau_source,
     objet=objet,
     nb_frames=nb_frames,
-    afficher_pml_flag=False,
+    afficher_pml_flag=True,
     afficher_waveform_flag=True,
     afficher_animation=True,
     afficher_capteurs_flag=True,

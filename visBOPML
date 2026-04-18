@@ -1,0 +1,115 @@
+import pickle
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.tri as mtri
+
+def charger_historique(nom_fichier):
+    with open(nom_fichier, "rb") as f:
+        return pickle.load(f)
+
+def tracer_carte_interpolee(gamma, puissance, cout, gamma_best, puissance_best):
+    plt.figure(figsize=(8, 6))
+
+    x = np.log10(gamma)
+    y = puissance
+    z = cout
+
+    triang = mtri.Triangulation(x, y)
+
+    contour = plt.tricontourf(triang, z, levels=20)
+    plt.tricontour(triang, z, levels=10, linewidths=0.6)
+
+    plt.scatter(x, y, s=35, edgecolors="black", linewidths=0.5, label="Essais")
+    plt.scatter(
+        np.log10(gamma_best),
+        puissance_best,
+        s=180,
+        marker="*",
+        edgecolors="black",
+        linewidths=1.0,
+        label="Meilleur point"
+    )
+
+    xticks = np.array([1e2, 1e3, 1e4, 5e4])
+    xticks = xticks[(xticks >= np.min(gamma)) & (xticks <= np.max(gamma))]
+    plt.xticks(np.log10(xticks), [f"{v:.0e}" for v in xticks])
+
+    plt.xlabel("gamma_max")
+    plt.ylabel("puissance_pml")
+    plt.title("Carte interpolee du ratio pression finale")
+    plt.colorbar(contour, label="Ratio pression finale")
+    plt.legend()
+    plt.tight_layout()
+def extraire_donnees(historique):
+    if "essais" in historique:
+        gamma = np.array([e["gamma_max"] for e in historique["essais"]], dtype=float)
+        puissance = np.array([e["puissance_pml"] for e in historique["essais"]], dtype=float)
+        cout = np.array([e["cout"] for e in historique["essais"]], dtype=float)
+    else:
+        x_iters = np.array(historique["x_iters"], dtype=float)
+        gamma = x_iters[:, 0]
+        puissance = x_iters[:, 1]
+        cout = np.array(historique["func_vals"], dtype=float)
+
+    gamma_best = historique["x_best"][0]
+    puissance_best = historique["x_best"][1]
+    cout_best = historique["fun_best"]
+
+    return gamma, puissance, cout, gamma_best, puissance_best, cout_best
+
+
+def tracer_cout_iterations(cout):
+    iterations = np.arange(1, len(cout) + 1)
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(iterations, cout, marker="o")
+    plt.xlabel("Iteration")
+    plt.ylabel("Ratio pression finale")
+    plt.title("Evolution du cout pendant l'optimisation bayesienne")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+
+def tracer_points_parametres(gamma, puissance, cout, gamma_best, puissance_best):
+    plt.figure(figsize=(8, 6))
+
+    sc = plt.scatter(gamma, puissance, c=cout, s=70)
+    plt.scatter(
+        gamma_best,
+        puissance_best,
+        s=180,
+        marker="*",
+        edgecolors="black",
+        linewidths=1.0,
+        label="Meilleur point"
+    )
+
+    plt.xscale("log")
+    plt.xlabel("gamma_max")
+    plt.ylabel("puissance_pml")
+    plt.title("Points testes par l'optimisation bayesienne")
+    plt.colorbar(sc, label="Ratio pression finale")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+
+def afficher_resume(gamma_best, puissance_best, cout_best):
+    print("=== Meilleur resultat ===")
+    print(f"gamma_max      = {gamma_best:.6g}")
+    print(f"puissance_pml  = {puissance_best:.6g}")
+    print(f"cout minimal   = {cout_best:.6g}")
+
+
+if __name__ == "__main__":
+    nom_fichier = "optimisation_pml_bo2.pkl"
+
+    historique = charger_historique(nom_fichier)
+    gamma, puissance, cout, gamma_best, puissance_best, cout_best = extraire_donnees(historique)
+
+    afficher_resume(gamma_best, puissance_best, cout_best)
+    tracer_cout_iterations(cout)
+    tracer_points_parametres(gamma, puissance, cout, gamma_best, puissance_best)
+    tracer_carte_interpolee(gamma, puissance, cout, gamma_best, puissance_best)
+
+    plt.show()

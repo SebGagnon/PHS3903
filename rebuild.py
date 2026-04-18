@@ -12,6 +12,8 @@ import copy
 from matplotlib.patches import Circle
 from scipy.signal import hilbert
 from scipy.optimize import least_squares
+from skopt import gp_minimize
+from skopt.space import Real
 
 def laplacien_9_points(u, h):
     """laplacien à 9 points"""
@@ -34,7 +36,7 @@ def laplacien_9_points(u, h):
     return lap
 
 def sourcetot(params, t):
-    """Calcule la source totale comme somme des pulses des capteurs."""
+    """Source totale"""
     nx = params["nx"]
     ny = params["ny"]
     sigma = params["sigma"]
@@ -48,7 +50,10 @@ def sourcetot(params, t):
 
     for x0, y0, t0 in pulses:
         enveloppe_spatiale = np.exp(-((x - x0)**2 + (y - y0)**2) / (2 * sigma**2))
-        enveloppe_temporelle = np.exp(-((t - t0)**2) / (2 * tau**2))
+
+        u = (t - t0) / tau
+        enveloppe_temporelle = (1 - u**2) * np.exp(-u**2 / 2)
+
         source += A0 * enveloppe_spatiale * enveloppe_temporelle
 
     return source
@@ -86,8 +91,6 @@ def couleurs_capteurs(params):
     base = ["red", "blue", "green", "magenta", "orange", "white"]
     n = len(params["capteurs"])
     return [base[i % len(base)] for i in range(n)]
-
-
 
 def creer_pml(params):
     """Creation du pml"""
@@ -468,9 +471,7 @@ def run_simulation(params):
     dt = params["dt"]
     t_total = params["t_total"]
 
-    
     capteurs = positions_capteurs(params)
-
     gamma_pml = creer_pml(params)
 
     h = L / nx
@@ -487,6 +488,7 @@ def run_simulation(params):
     temps = []
     trajectoire_objet = []
 
+
     for n in range(nt):
 
         t = n * dt
@@ -500,19 +502,19 @@ def run_simulation(params):
         a = gamma_total * dt / 2
 
         lap = laplacien_9_points(u_n, h)
-        
-        source = sourcetot(params,t)
-        
+        source = sourcetot(params, t)
+
         u_np1[1:-1, 1:-1] = (
             2 * u_n[1:-1, 1:-1]
-                - (1 - a[1:-1, 1:-1]) * u_nm1[1:-1, 1:-1]
-                + dt**2 * (
+            - (1 - a[1:-1, 1:-1]) * u_nm1[1:-1, 1:-1]
+            + dt**2 * (
                 c[1:-1, 1:-1]**2 * lap[1:-1, 1:-1]
                 + source[1:-1, 1:-1]
-                    )
-                    ) / (1 + a[1:-1, 1:-1])
+            )
+        ) / (1 + a[1:-1, 1:-1])
 
         u_np1 = conditions_frontieres(u_np1)
+
 
         temps.append(t)
 
@@ -535,8 +537,7 @@ def run_simulation(params):
         "nt": nt,
         "temps": np.array(temps),
         "signaux_capteurs": [np.array(signal) for signal in signaux_capteurs],
-        "trajectoire_objet_indices": np.array(trajectoire_objet),
-        "trajectoire_objet_m": trajectoire_objet_en_metres(params, trajectoire_objet) if len(trajectoire_objet) > 0 else None,
+        "trajectoire_objet": trajectoire_objet,
     }
 
 def calcule_echos(params):
@@ -770,6 +771,49 @@ def erreur_bord_pulse(params, position_estimee, resultat_pulse):
 
     return erreur
 
+def calcule_c_max(params):
+    c_eau = np.sqrt(params["kappa"] / params["rho"])
+
+    if params.get("objet") is not None and "rho" in params["objet"] and "kappa" in params["objet"]:
+        c_objet = np.sqrt(params["objet"]["kappa"] / params["objet"]["rho"])
+        return max(c_eau, c_objet)
+
+    return c_eau
+
+def calcule_cfl(params):
+    h = params["L"] / params["nx"]
+    c_max = calcule_c_max(params)
+    return c_max * params["dt"] / h
+
+def liste_cfl_to_liste_nx(params, liste_cfl):
+    """
+    Convertit une liste de CFL en liste de nx, en gardant dt fixe.
+    """
+    c_max = calcule_c_max(params)
+    L = params["L"]
+    dt = params["dt"]
+
+    liste_nx = []
+    for cfl in liste_cfl:
+        nx = int(round(cfl * L / (c_max * dt)))
+        nx = max(nx, 5)
+        liste_nx.append(nx)
+
+    return liste_nx
+
+def liste_cfl_to_liste_dt(params, liste_cfl):
+    """
+    Convertit une liste de CFL en liste de dt, en gardant nx fixe.
+    """
+    c_max = calcule_c_max(params)
+    h = params["L"] / params["nx"]
+
+    liste_dt = []
+    for cfl in liste_cfl:
+        dt = cfl * h / c_max
+        liste_dt.append(dt)
+
+    return liste_dt
 
 def calcule_erreurs_multilateration(params):
     """
@@ -828,6 +872,7 @@ def etude_erreur_maillage(params_base, liste_nx, nom_pickle="etude_maillage.pkl"
             "nx": nx,
             "ny": nx,
             "dt": params["dt"],
+            "cfl": calcule_cfl(params),
             "erreurs_pulses": bilan["erreurs_pulses"],
             "erreur_moyenne": bilan["erreur_moyenne"],
             "details": bilan["details"],
@@ -837,7 +882,6 @@ def etude_erreur_maillage(params_base, liste_nx, nom_pickle="etude_maillage.pkl"
             pickle.dump(resultats, f)
 
     return resultats
-
 
 def etude_erreur_dt(params_base, liste_dt, nom_pickle="etude_dt.pkl"):
     """
@@ -858,6 +902,7 @@ def etude_erreur_dt(params_base, liste_dt, nom_pickle="etude_dt.pkl"):
                 "nx": params["nx"],
                 "ny": params["ny"],
                 "dt": dt,
+                "cfl": calcule_cfl(params),
                 "erreurs_pulses": bilan["erreurs_pulses"],
                 "erreur_moyenne": bilan["erreur_moyenne"],
                 "details": bilan["details"],
@@ -1280,36 +1325,66 @@ def rayon_m_to_grid(L, nx, rayon_m):
     h = L / nx
     return rayon_m / h
 
+def fonction_cout_pml(x, params_normal_base, signaux_ref):
+    gamma_max, puissance_pml = x
+
+    params_test = copy.deepcopy(params_normal_base)
+    params_test["gamma_max_pml"] = gamma_max
+    params_test["puissance_pml"] = puissance_pml
+
+    resultats = run_simulation(params_test)
+    signaux_test = resultats["signaux_capteurs"]
+
+    cout = 0.0
+    for sig_ref, sig_test in zip(signaux_ref, signaux_test):
+        if len(sig_ref) != len(sig_test):
+            raise ValueError(
+                f"Longueur differente entre reference ({len(sig_ref)}) "
+                f"et test ({len(sig_test)}). Verifie dt et t_total."
+            )
+        cout += np.sum(np.abs(sig_test - sig_ref))
+
+    print(
+        f"gamma_max = {gamma_max:.3f}, "
+        f"puissance_pml = {puissance_pml:.3f}, "
+        f"cout = {cout:.6f}"
+    )
+
+    return cout
+
 L = 1000.0
-nx = 400
-ny = 400
+nx = 250
+ny = 250
 rayon_objet_m = 12.0
 ratio_pml = 0.2
+gamma_max = 60
+puissance = 0.4
+position_objet_m = (333.0, 765.0)
 
-position_objet_m = (600.0, 720.0)
-position_c1_m = (350.0, 350.0)
-position_c2_m = (300.0, 700.0)
-position_c3_m = (700.0, 350.0)
+position_c1_m = (0.41*L, 0.43*L)
+position_c2_m = (0.65*L, 0.72*L)
+position_c3_m = (L/2, L/2)
 
 params = {
     "L": L,
     "nx": nx,
     "ny": ny,
-    "dt": 3e-4,
+    "dt": 6e-4,
     "t_total": 4,
     "rho": 1000,
     "kappa": 2.2e9,
     "sigma": 1,                                                         
-    "A0": 1000,
-    "tau": 0.005,
+    "A0": 1e9,
+    "tau": 0.01,
     "epaisseur_pml_ratio": ratio_pml,
-    "puissance_pml" : 0.5,
-    "gamma_max_pml": 60, 
+    "puissance_pml" : puissance,
+    "gamma_max_pml": gamma_max, 
     "gamma_eau" : 0.3,
     "capteurs": [
-        {"nom": "Capteur 1", "position": m_to_grid(L, nx, ny, position_c1_m), "emissions": [0.020]},
-        {"nom": "Capteur 2", "position": m_to_grid(L, nx, ny, position_c2_m), "emissions": [1]},
-        {"nom": "Capteur 3", "position": m_to_grid(L, nx, ny, position_c3_m), "emissions": [1.75]},
+
+        {"nom": "Capteur 1", "position": m_to_grid(L, nx, ny, position_c1_m), "emissions": [1]},
+        {"nom": "Capteur 2", "position": m_to_grid(L, nx, ny, position_c2_m), "emissions": [2]},
+        {"nom": "Capteur 3", "position": m_to_grid(L, nx, ny, position_c3_m), "emissions": [0.2]},
     ],
 
     "objet": {
@@ -1322,11 +1397,15 @@ params = {
     },
 }
 
-MODE = 3 # 1 -- simul simple, 2 -- multilateration , 3 -- boucle pour tests
+MODE = 4# 1 -- simul simple, 2 -- multilateration , 3 -- boucle pour tests
 
 if MODE == 1 :
     resultats = run_simulation(params)
     animer_resultats(params, resultats)
+    
+    plot_signaux(params, resultats)
+    
+
 
 if MODE == 2 :
     # resultats = run_simulation(params)
@@ -1342,18 +1421,110 @@ if MODE == 2 :
         tracer_localisation_un_pulse(params, positions_estimees[i], distances_pulses[i])
 
 if MODE == 3 :
+    liste_cfl = [0.05, 0.08, 0.10, 0.12, 0.15, 0.18, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1, 1.05, 1.1,1.15,1.2,1.25,1.3]
 
-    liste_nx = [10,20,30,40,50,60,70,80,90,100,125,150,175,200,225,250,275,300,325,350,375,400]
-    liste_dt = [1e-4,1.5e-4,2e-4,2.5e-4,3e-4,3.5e-4,4e-4,4.5e-4, 5e-4,5.5e-4,6e-4,6.5e-4, 7e-4,7.5e-4,8e-4]
+    liste_nx = liste_cfl_to_liste_nx(params, liste_cfl)
+    liste_dt = liste_cfl_to_liste_dt(params, liste_cfl)
 
     resultats_maillage = etude_erreur_maillage(
         params,
         liste_nx,
-        nom_pickle="etude_maillage2.pkl"
+        nom_pickle="etude_maillage_cfl.pkl"
     )
 
     resultats_dt = etude_erreur_dt(
-        params, 
+        params,
         liste_dt,
-        nom_pickle="etude_dt2.pkl"
+        nom_pickle="etude_dt_cfl.pkl"
     )
+
+if MODE == 4:
+
+    L_mega = 2000.0
+    nx_mega = 500
+    ny_mega = 500
+
+    params_mega = copy.deepcopy(params)
+    params_mega["L"] = L_mega
+    params_mega["nx"] = nx_mega
+    params_mega["ny"] = ny_mega
+    params_mega["gamma_max_pml"] = 0.0
+    params_mega["puissance_pml"] = 1.0  
+
+
+    params_mega["capteurs"] = [
+
+    {"nom": "Capteur 5", "position": m_to_grid(L_mega, nx_mega, ny_mega, (1000.0, 1000.0)), "emissions": [0.01]},
+]
+
+    resultats_ref = run_simulation(params_mega)
+    signaux_ref = resultats_ref["signaux_capteurs"]
+
+
+    L_normal = 1000.0
+    nx_normal = 250
+    ny_normal = 250
+
+    params_normal_base = copy.deepcopy(params)
+    params_normal_base["L"] = L_normal
+    params_normal_base["nx"] = nx_normal
+    params_normal_base["ny"] = ny_normal
+    params_normal_base["epaisseur_pml_ratio"] = 0.2
+    params_normal_base["gamma_max_pml"] = 0.0
+    params_normal_base["puissance_pml"] = 1.0
+
+    params_normal_base["capteurs"] = [
+
+    {"nom": "Capteur 5", "position": m_to_grid(L_normal, nx_normal, ny_normal, (500.0, 500.0)), "emissions": [0.01]},
+]
+
+
+    espace = [
+        Real(0.01, 150, prior="uniform", name="gamma_max"),
+        Real(0.01, 2, prior="uniform", name="puissance_pml"),
+    ]
+
+    resultat_bo = gp_minimize(
+        func=lambda x: fonction_cout_pml(x, params_normal_base, signaux_ref),
+        dimensions=espace,
+        n_calls=50,
+        n_initial_points=10,
+        acq_func="EI",
+        random_state=23
+    )
+
+    print("Meilleur cout :", resultat_bo.fun)
+    print("Meilleurs parametres :", resultat_bo.x)
+
+
+    gamma_best, puissance_best = resultat_bo.x
+
+    params_best = copy.deepcopy(params_normal_base)
+    params_best["gamma_max_pml"] = gamma_best
+    params_best["puissance_pml"] = puissance_best
+
+    resultats_best = run_simulation(params_best)
+    signaux_best = resultats_best["signaux_capteurs"]
+
+    cout_verif = 0.0
+    for sig_ref, sig_best in zip(signaux_ref, signaux_best):
+        cout_verif += np.sum(np.abs(sig_best - sig_ref))
+
+    print("Cout reverifie :", cout_verif)
+
+    historique_bo = {
+        "essais": [
+            {
+                "gamma_max": x[0],
+                "puissance_pml": x[1],
+                "cout": y
+            }
+            for x, y in zip(resultat_bo.x_iters, resultat_bo.func_vals)
+        ],
+        "x_best": resultat_bo.x,
+        "fun_best": resultat_bo.fun,
+        "cout_verifie": cout_verif,
+    }
+
+    with open("optimisation_pml_new.pkl", "wb") as f:
+        pickle.dump(historique_bo, f)

@@ -68,21 +68,47 @@ def afficher_resume(resultats_maillage, resultats_dt):
     for dt in sorted(resultats_dt.keys()):
         bloc = resultats_dt[dt]
         print(f"dt = {bloc['dt']:.6e} s | erreur moyenne = {bloc.get('erreur_moyenne', np.nan):.6f} m")
+def extraire_cfl_erreur(resultats):
+    cfl_vals = []
+    erreurs = []
 
+    for cle in resultats:
+        bloc = resultats[cle]
+        cfl_vals.append(bloc["cfl"])
+        erreurs.append(bloc["erreur_moyenne"])
+
+    cfl_vals = np.array(cfl_vals, dtype=float)
+    erreurs = np.array(erreurs, dtype=float)
+
+    ordre = np.argsort(cfl_vals)
+
+    return cfl_vals[ordre], erreurs[ordre]
 
 if __name__ == "__main__":
-    nom_pickle_maillage = "etude_maillage2.pkl"
-    nom_pickle_dt = "etude_dt2.pkl"
+    nom_pickle_maillage = "etude_maillage_cfl.pkl"
+    nom_pickle_dt = "etude_dt_cfl.pkl"
 
     resultats_maillage = charger_pickle(nom_pickle_maillage)
-    resultats_dt = charger_pickle(nom_pickle_dt)
+    # resultats_dt = charger_pickle(nom_pickle_dt)
 
-    afficher_resume(resultats_maillage, resultats_dt)
+    # afficher_resume(resultats_maillage, resultats_dt)
 
     data_maillage = extraire_maillage(resultats_maillage)
-    data_dt = extraire_dt(resultats_dt)
+    # data_dt = extraire_dt(resultats_dt)
 
     tracer_erreur_maillage(data_maillage)
-    tracer_erreur_dt(data_dt)
+    # tracer_erreur_dt(data_dt)
+    cfl_maillage, err_maillage = extraire_cfl_erreur(resultats_maillage)
+    
 
+    plt.figure(figsize=(8, 5))
+    plt.plot(cfl_maillage, err_maillage, marker="o", label="CFL -> nx")
+    
+    plt.xlabel("CFL")
+    plt.ylabel("Erreur moyenne [m]")
+    plt.title("Erreur moyenne en fonction du CFL")
+    plt.grid(True, alpha=0.4)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
     plt.show()
