@@ -36,12 +36,12 @@ def laplacien_9_points(u, h):
     return lap
 
 def sourcetot(params, t):
-    """Source totale"""
+    """Source totale avec wavelet de Ricker défini par la fréquence centrale f_c."""
     nx = params["nx"]
     ny = params["ny"]
     sigma = params["sigma"]
     A0 = params["A0"]
-    tau = params["tau"]
+    f_c = params["f_c"]   # fréquence centrale en Hz
 
     pulses = construction_pulses(params)
 
@@ -51,8 +51,8 @@ def sourcetot(params, t):
     for x0, y0, t0 in pulses:
         enveloppe_spatiale = np.exp(-((x - x0)**2 + (y - y0)**2) / (2 * sigma**2))
 
-        u = (t - t0) / tau
-        enveloppe_temporelle = (1 - u**2) * np.exp(-u**2 / 2)
+        a = np.pi * f_c * (t - t0)
+        enveloppe_temporelle = (1 - 2 * a**2) * np.exp(-a**2)
 
         source += A0 * enveloppe_spatiale * enveloppe_temporelle
 
@@ -246,7 +246,7 @@ def creer_patch_objet(ax, params, t=0.0):
     ax.add_patch(patch)
     return patch
 
-def animer_resultats_db(params, resultats, duree_animation_ms=3000):
+def animer_resultats_db(params, resultats, duree_animation_ms=3000, fraction_db_min=0.785):
     """Animation du champ en dB."""
     frames = resultats["frames"]
     temps_frames = resultats["temps_frames"]
@@ -264,8 +264,8 @@ def animer_resultats_db(params, resultats, duree_animation_ms=3000):
         for frame in frames
     ]
 
-    db_min = min(np.min(frame_db) for frame_db in frames_db)
     db_max = max(np.max(frame_db) for frame_db in frames_db)
+    db_min = fraction_db_min * db_max
 
     interval = duree_animation_ms / len(frames_db)
 
@@ -426,6 +426,26 @@ def plot_signaux(params, resultats):
 
     plt.xlabel("Temps [s]")
     plt.ylabel("Pression instantanée [Pa]")
+    plt.title("Signaux mesurés par les capteurs")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+def plot_signaux_db(params, resultats, p_ref=1e-6, epsilon=1e-12):
+    """Plot des mesures de chaque capteur en dB."""
+    temps = resultats["temps"]
+    signaux = resultats["signaux_capteurs"]
+    couleurs = couleurs_capteurs(params)
+
+    plt.figure(figsize=(8, 5))
+
+    for i, (signal, couleur) in enumerate(zip(signaux, couleurs)):
+        signal = np.asarray(signal)
+        signal_db = 20 * np.log10(np.maximum(np.abs(signal), epsilon) / p_ref)
+        plt.plot(temps, signal_db, color=couleur, label=f"Capteur {i+1}")
+
+    plt.xlabel("Temps [s]")
+    plt.ylabel("Niveau de pression [dB]")
     plt.title("Signaux mesurés par les capteurs")
     plt.legend()
     plt.tight_layout()
@@ -1586,7 +1606,7 @@ def cout_capteurs_bo(x, params_base, n_essais=8, seed=42,
 
     return cout
 
-def cree_scenarios_fixes(params, n_scenarios=10, seed=140,
+def cree_scenarios_fixes(params, n_scenarios=20, seed=140,
                          marge_bord_m=20.0, vmin=0.0, vmax=75.0):
     """
     Génère une liste fixe de scénarios bateau.
@@ -1705,58 +1725,139 @@ def construit_objectif_bo(params_base, scenarios, historique=None,
 
     return objectif
 
+def creer_params_essai(params_base, position_m, gamma_max, puissance_pml):
+    params_test = copy.deepcopy(params_base)
+    params_test.update({
+        "L": 1000.0,
+        "nx": 250,
+        "ny": 250,
+        "epaisseur_pml_ratio": 0.2,
+        "gamma_max_pml": gamma_max,
+        "puissance_pml": puissance_pml,
+        "capteurs": [
+            {
+                "nom": "Capteur 1",
+                "position": m_to_grid(1000.0, 250, 250, position_m),
+                "emissions": [0.01],
+            }
+        ],
+    })
+    return params_test
+
+def genere_essais_aleatoires(nb_essais, demi_cote=300.0, marge=20.0, seed=23):
+    rng = np.random.default_rng(seed)
+    essais = []
+
+    for _ in range(nb_essais):
+        dx = rng.uniform(-demi_cote + marge, demi_cote - marge)
+        dy = rng.uniform(-demi_cote + marge, demi_cote - marge)
+        position_m = (500.0 + dx, 500.0 + dy)
+        essais.append(position_m)
+
+    return essais
+
+def cout_signal_apres_impulsion(params_test, resultats, facteur_tau=4.0):
+    temps = np.array(resultats["temps"])
+    signal = np.array(resultats["signaux_capteurs"][0])
+
+    t0 = params_test["capteurs"][0]["emissions"][0]
+    tau = params_test["tau"]
+
+    t_debut = t0 + facteur_tau * tau
+    masque = temps >= t_debut
+
+    return np.sum(np.abs(signal[masque]))
+
+def fonction_cout_pml(x, params_base, essais):
+    gamma_max, puissance_pml = x
+    cout_total = 0.0
+
+    for position_m in essais:
+        params_test = creer_params_essai(
+            params_base=params_base,
+            position_m=position_m,
+            gamma_max=gamma_max,
+            puissance_pml=puissance_pml,
+        )
+
+        resultats = run_simulation(params_test)
+        cout_total += cout_signal_apres_impulsion(params_test, resultats)
+
+    cout_moyen = cout_total / len(essais)
+
+    print(
+        f"gamma_max = {gamma_max:.3f}, "
+        f"puissance_pml = {puissance_pml:.3f}, "
+        f"cout = {cout_moyen:.6f}"
+    )
+
+    return cout_moyen
+
 L = 1000.0
 nx = 250
 ny = 250
-rayon_objet_m = 12.0
+rayon_objet_m = 15.0
 ratio_pml = 0.2
-gamma_max = 60
-puissance = 0.4
-position_objet_m = (653.42, 465.77)
+gamma_max = 0
+puissance = 0.0
+position_objet_m = (500.42, 432.77)
+dt = 1e-4
 
-position_c1_m = (232.91, 513.87)
-position_c2_m = (443.92, 246.13)
-position_c3_m = (765.30, 350.35)
+position_c1_m = (500, 500)
+position_c2_m = (647, 597)
+position_c3_m = (663, 300)
 
 params = {
     "L": L,
     "nx": nx,
     "ny": ny,
-    "dt": 6e-4,
-    "t_total": 3.2,
+    "dt": dt,
+    "t_total": 0.5,
     "rho": 1000,
     "kappa": 2.2e9,
     "sigma": 1,                                                         
-    "A0": 1e9,
-    "tau": 0.01,
+    "A0": 15000,
+    "f_c": 10,
     "epaisseur_pml_ratio": ratio_pml,
     "puissance_pml" : puissance,
     "gamma_max_pml": gamma_max, 
     "gamma_eau" : 0.3,
     "capteurs": [
 
-        {"nom": "Capteur 1", "position": m_to_grid(L, nx, ny, position_c1_m), "emissions": [1]},
-        {"nom": "Capteur 2", "position": m_to_grid(L, nx, ny, position_c2_m), "emissions": [2]},
-        {"nom": "Capteur 3", "position": m_to_grid(L, nx, ny, position_c3_m), "emissions": [0.2]},
+        {"nom": "Capteur 1", "position": m_to_grid(L, nx, ny, position_c1_m), "emissions": [2500*dt]},
+        # {"nom": "Capteur 2", "position": m_to_grid(L, nx, ny, position_c2_m), "emissions": [1]},
+        # {"nom": "Capteur 3", "position": m_to_grid(L, nx, ny, position_c3_m), "emissions": [2]},
     ],
 
-    "objet": {
-        "position": m_to_grid(L, nx, ny, position_objet_m),
-        "rayon": rayon_m_to_grid(L, nx, rayon_objet_m),
-        "rho": 7800,
-        "kappa": 1.6e11,
-        "gamma": 2,
-        "vitesse_m_s": (8.80, -10.820),
-    },
+    # "objet": {
+    #     "position": m_to_grid(L, nx, ny, position_objet_m),
+    #     "rayon": rayon_m_to_grid(L, nx, rayon_objet_m),
+    #     "rho": 7800,
+    #     "kappa": 1.6e11,
+    #     "gamma": 2,
+    #     "vitesse_m_s": (8.80, -10.820),
+    # },
 }
 
-MODE = 2 # 1 -- simul simple, 2 -- multilateration , 3 -- boucle pour tests
+MODE = 1 # 1 -- simul simple, 2 -- multilateration , 3 -- boucle pour tests
 
 if MODE == 1 :
+    ix, iy = params["capteurs"][0]["position"]
+    temps = np.arange(0, params["t_total"], params["dt"])
+
+    s = np.array([sourcetot(params, t)[ix, iy] for t in temps])
+
+    plt.plot(temps, s)
+    plt.xlabel("Temps [s]")
+    plt.ylabel("Amplitude [Pa]")
+    plt.grid(True)
+    plt.show()
     resultats = run_simulation(params)
-    animer_resultats(params, resultats)
+    # ani =animer_resultats(params, resultats)
     
     plot_signaux(params, resultats)
+    
+
     
 if MODE == 2 :
     # resultats = run_simulation(params)
@@ -1790,82 +1891,39 @@ if MODE == 3 :
     )
 
 if MODE == 4:
-
-
-    L_mega = 2000.0
-    nx_mega = 500
-    ny_mega = 500
-
-    params_mega = copy.deepcopy(params)
-    params_mega["L"] = L_mega
-    params_mega["nx"] = nx_mega
-    params_mega["ny"] = ny_mega
-    params_mega["gamma_max_pml"] = 0.0
-    params_mega["puissance_pml"] = 1.0  
-
-
-    params_mega["capteurs"] = [
-
-    {"nom": "Capteur 5", "position": m_to_grid(L_mega, nx_mega, ny_mega, (1000.0, 1000.0)), "emissions": [0.01]},
-]
-
-    resultats_ref = run_simulation(params_mega)
-    signaux_ref = resultats_ref["signaux_capteurs"]
-
-
-    L_normal = 1000.0
-    nx_normal = 250
-    ny_normal = 250
-
-    params_normal_base = copy.deepcopy(params)
-    params_normal_base["L"] = L_normal
-    params_normal_base["nx"] = nx_normal
-    params_normal_base["ny"] = ny_normal
-    params_normal_base["epaisseur_pml_ratio"] = 0.2
-    params_normal_base["gamma_max_pml"] = 0.0
-    params_normal_base["puissance_pml"] = 1.0
-
-    params_normal_base["capteurs"] = [
-
-    {"nom": "Capteur 5", "position": m_to_grid(L_normal, nx_normal, ny_normal, (500.0, 500.0)), "emissions": [0.01]},
-]
-
+    nb_essais = 20
+    essais = genere_essais_aleatoires(
+        nb_essais=nb_essais,
+        demi_cote=300.0,
+        marge=5.0,
+        seed=23,
+    )
 
     espace = [
-        Real(0.01, 150, prior="uniform", name="gamma_max"),
-        Real(0.01, 2, prior="uniform", name="puissance_pml"),
+        Real(0.01, 150, name="gamma_max"),
+        Real(0.01, 2, name="puissance_pml"),
     ]
 
     resultat_bo = gp_minimize(
-        func=lambda x: fonction_cout_pml(x, params_normal_base, signaux_ref),
+        func=lambda x: fonction_cout_pml(x, params, essais),
         dimensions=espace,
-        n_calls=50,
-        n_initial_points=10,
+        x0=[[60.0, 0.5]],
+        n_calls=35,
+        n_initial_points=7,
         acq_func="EI",
-        random_state=23
+        random_state=12,
     )
+
+    gamma_best, puissance_best = resultat_bo.x
+    cout_verif = fonction_cout_pml(resultat_bo.x, params, essais)
 
     print("Meilleur cout :", resultat_bo.fun)
     print("Meilleurs parametres :", resultat_bo.x)
-
-
-    gamma_best, puissance_best = resultat_bo.x
-
-    params_best = copy.deepcopy(params_normal_base)
-    params_best["gamma_max_pml"] = gamma_best
-    params_best["puissance_pml"] = puissance_best
-
-    resultats_best = run_simulation(params_best)
-    signaux_best = resultats_best["signaux_capteurs"]
-
-    cout_verif = 0.0
-    for sig_ref, sig_best in zip(signaux_ref, signaux_best):
-        cout_verif += np.sum(np.abs(sig_best - sig_ref))
-
     print("Cout reverifie :", cout_verif)
 
     historique_bo = {
-        "essais": [
+        "positions_essais_m": essais,
+        "essais_bo": [
             {
                 "gamma_max": x[0],
                 "puissance_pml": x[1],
@@ -1878,10 +1936,8 @@ if MODE == 4:
         "cout_verifie": cout_verif,
     }
 
-    with open("optimisation_pml_new.pkl", "wb") as f:
-
+    with open("optimisation_pml_residuel.pkl", "wb") as f:
         pickle.dump(historique_bo, f)
-
 if MODE == 5:
     x_test = [
         0.35 * params["L"], 0.35 * params["L"],
@@ -1905,16 +1961,25 @@ if MODE == 6:
     from skopt import gp_minimize
     from skopt.space import Real
     import pickle
+    import time
 
     marge_bord_m = 20.0
     distance_min_m = 80.0
     n_scenarios_train = 12
-    n_scenarios_valid = 20
 
     L = params["L"]
     epaisseur_pml_m = params["epaisseur_pml_ratio"] * L
     borne_min = epaisseur_pml_m + marge_bord_m
     borne_max = L - epaisseur_pml_m - marge_bord_m
+
+    print("\n==============================")
+    print("LANCEMENT OPTIMISATION BO")
+    print(f"L = {L:.2f} m")
+    print(f"Épaisseur PML = {epaisseur_pml_m:.2f} m")
+    print(f"Borne min = {borne_min:.2f} m")
+    print(f"Borne max = {borne_max:.2f} m")
+    print(f"Distance minimale entre capteurs = {distance_min_m:.2f} m")
+    print(f"Nombre de scénarios train = {n_scenarios_train}")
 
     espace = [
         Real(borne_min, borne_max, name="x1"),
@@ -1934,9 +1999,11 @@ if MODE == 6:
         vmax=20.0
     )
 
+    print("\nScénarios d'entraînement générés :", len(scenarios_train))
+
     historique = []
 
-    objectif = construit_objectif_bo(
+    objectif_brut = construit_objectif_bo(
         params,
         scenarios_train,
         historique=historique,
@@ -1946,17 +2013,53 @@ if MODE == 6:
         verbose=True
     )
 
+    compteur = {"n": 0, "best": np.inf, "best_x": None}
+    t0_global = time.time()
+
+    def objectif(x):
+        compteur["n"] += 1
+        print("\n----------------------------------------")
+        print(f"ÉVALUATION {compteur['n']}")
+        print(f"x = {x}")
+
+        t0_eval = time.time()
+        cout = objectif_brut(x)
+        dt_eval = time.time() - t0_eval
+
+        if cout < compteur["best"]:
+            compteur["best"] = cout
+            compteur["best_x"] = list(x)
+            print(">>> NOUVEAU MEILLEUR COÛT <<<")
+
+        print(f"Coût obtenu = {cout:.6f}")
+        print(f"Meilleur coût à date = {compteur['best']:.6f}")
+        print(f"Temps pour cette évaluation = {dt_eval:.2f} s")
+
+        if compteur["best_x"] is not None:
+            xb = compteur["best_x"]
+            print("Meilleurs capteurs à date :")
+            print(f"  C1 = ({xb[0]:.2f}, {xb[1]:.2f}) m")
+            print(f"  C2 = ({xb[2]:.2f}, {xb[3]:.2f}) m")
+            print(f"  C3 = ({xb[4]:.2f}, {xb[5]:.2f}) m")
+
+        print("----------------------------------------")
+        return cout
+
     res = gp_minimize(
         func=objectif,
         dimensions=espace,
-        n_calls=15,
-        n_initial_points=6,
-        acq_func="EI",
+        n_calls=50,
+        n_initial_points=10,
+        acq_func="LCB",
         random_state=42
     )
 
+    temps_total = time.time() - t0_global
+
     print("\n==============================")
     print("OPTIMISATION TERMINÉE")
+    print(f"Temps total = {temps_total:.2f} s")
+    print("Nombre total d'évaluations :", compteur["n"])
     print("Meilleur coût train :", res.fun)
     print("Meilleure solution x :", res.x)
 
@@ -1966,32 +2069,17 @@ if MODE == 6:
         (res.x[4], res.x[5]),
     ]
 
-    print("\nMeilleurs capteurs :")
+    print("\nMeilleurs capteurs finaux :")
     for i, (x, y) in enumerate(capteurs_best):
         print(f"  C{i+1} = ({x:.2f}, {y:.2f}) m")
 
-    # Validation sur d'autres scénarios
-    scenarios_valid = cree_scenarios_fixes(
-        params,
-        n_scenarios=n_scenarios_valid,
-        seed=999,
-        marge_bord_m=marge_bord_m,
-        vmin=0.0,
-        vmax=20.0
-    )
+    couts_train = [entry["cout"] for entry in historique if "cout" in entry]
 
-    objectif_valid = construit_objectif_bo(
-        params,
-        scenarios_valid,
-        historique=None,
-        marge_bord_m=marge_bord_m,
-        distance_min_m=distance_min_m,
-        penalite=1e6,
-        verbose=False
-    )
-
-    cout_valid = objectif_valid(res.x)
-    print("Coût validation :", cout_valid)
+    print("\nRésumé des coûts train :")
+    print(f"  Nombre d'essais = {len(couts_train)}")
+    print(f"  Coût min = {np.min(couts_train):.6f}")
+    print(f"  Coût max = {np.max(couts_train):.6f}")
+    print(f"  Coût moyen = {np.mean(couts_train):.6f}")
 
     with open("bo_capteurs_new.pkl", "wb") as f:
         pickle.dump({
@@ -1999,8 +2087,8 @@ if MODE == 6:
             "res_fun": res.fun,
             "capteurs_best": capteurs_best,
             "historique": historique,
+            "couts_train": couts_train,
             "scenarios_train": scenarios_train,
-            "cout_valid": cout_valid,
         }, f)
 
-    print("\nRésultats sauvés dans bo_capteurs.pkl")
+    print("\nRésultats sauvés dans bo_capteurs_new.pkl")
