@@ -1034,20 +1034,19 @@ def affiche_distances_pulses(distances_pulses):
                 print(f"  Capteur {i+1} : distance non disponible")
             else:
                 print(f"  Capteur {i+1} : distance estimee = {d:.4f} m")
-
 def estime_position_un_pulse(params, resultat_pulse):
     """
-    Estime la position de l'objet pour un pulse à partir
-    des distances estimées des 3 capteurs.
+    Même multilateration qu'avant, mais avec plusieurs points de départ
+    pour éviter de converger vers un mauvais minimum local.
     """
     capteurs_m = positions_capteurs_m(params)
     distances = np.array(resultat_pulse["distances"], dtype=float)
 
-    masque_valide = np.isfinite(distances)
+    masque_valide = np.isfinite(distances) & (distances > 0)
     capteurs_valides = capteurs_m[masque_valide]
     distances_valides = distances[masque_valide]
 
-    if len(distances_valides) < 2:
+    if len(distances_valides) < 3:
         raise ValueError("Pas assez de distances valides pour estimer une position.")
 
     def residus(pos):
@@ -1055,22 +1054,58 @@ def estime_position_un_pulse(params, resultat_pulse):
         d_calc = np.sqrt((capteurs_valides[:, 0] - x)**2 + (capteurs_valides[:, 1] - y)**2)
         return d_calc - distances_valides
 
-    x0 = np.mean(capteurs_valides[:, 0])
-    y0 = np.mean(capteurs_valides[:, 1])
+    L = params["L"]
 
-    sol = least_squares(
-        residus,
-        x0=np.array([x0, y0]),
-        bounds=([0.0, 0.0], [params["L"], params["L"]])
-    )
+    points_init = []
+
+    # centre des capteurs
+    points_init.append(np.mean(capteurs_valides, axis=0))
+
+    # chaque capteur
+    for p in capteurs_valides:
+        points_init.append(np.array(p, dtype=float))
+
+    # # milieux entre paires de capteurs
+    # for i in range(len(capteurs_valides)):
+    #     for j in range(i + 1, len(capteurs_valides)):
+    #         points_init.append(0.5 * (capteurs_valides[i] + capteurs_valides[j]))
+
+
+
+    meilleur_sol = None
+    meilleur_score = np.inf
+
+    for x0 in points_init:
+        try:
+            sol = least_squares(
+                residus,
+                x0=np.clip(x0, 0.0, L),
+                bounds=([0.0, 0.0], [L, L]),
+                ftol=1e-12,
+                xtol=1e-12,
+                gtol=1e-12,
+                max_nfev=5000
+            )
+
+            score = np.sum(sol.fun**2)
+
+            if score < meilleur_score:
+                meilleur_score = score
+                meilleur_sol = sol
+
+        except Exception:
+            pass
+
+    if meilleur_sol is None:
+        raise RuntimeError("Échec de la multilateration.")
 
     return {
         "pulse_id": resultat_pulse["pulse_id"],
         "capteur_emetteur": resultat_pulse["capteur_emetteur"],
-        "position_estimee": sol.x,
-        "cout": sol.cost,
-        "succes": sol.success,
-        "message": sol.message,
+        "position_estimee": meilleur_sol.x,
+        "cout": meilleur_sol.cost,
+        "succes": meilleur_sol.success,
+        "message": meilleur_sol.message,
     }
 
 def estime_positions(params, distances_pulses):
@@ -1352,6 +1387,324 @@ def fonction_cout_pml(x, params_normal_base, signaux_ref):
 
     return cout
 
+def zone_valide_capteurs_m(params, marge_interne_m=30.0):
+    """
+    Retourne les bornes valides en mètres pour placer les capteurs hors du pml.
+    """
+    L = params["L"]
+    epaisseur_pml_m = params["epaisseur_pml_ratio"] * L
+
+    borne_min = epaisseur_pml_m + marge_interne_m
+    borne_max = L - epaisseur_pml_m - marge_interne_m
+
+    if borne_min >= borne_max:
+        raise ValueError("Zone valide trop petite pour placer les capteurs.")
+
+    return borne_min, borne_max
+
+def positions_capteurs_trop_proches(capteurs_m, distance_min_m=80.0):
+    """
+    Vérifie si au moins deux capteurs sont trop proches.
+    """
+    for i in range(len(capteurs_m)):
+        for j in range(i + 1, len(capteurs_m)):
+            d = np.sqrt(
+                (capteurs_m[i][0] - capteurs_m[j][0])**2 +
+                (capteurs_m[i][1] - capteurs_m[j][1])**2
+            )
+            if d < distance_min_m:
+                return True
+    return False
+
+def applique_positions_capteurs(params, capteurs_m):
+    """
+    Remplace les positions des 3 capteurs dans params à partir de positions en mètres.
+    """
+    params_new = copy.deepcopy(params)
+
+    for i, (x_m, y_m) in enumerate(capteurs_m):
+        params_new["capteurs"][i]["position"] = m_to_grid(
+            params_new["L"],
+            params_new["nx"],
+            params_new["ny"],
+            (x_m, y_m)
+        )
+
+    return params_new
+
+def trajectoire_valide(x0, y0, vx, vy, params, marge_bord_m=0.0):
+    """
+    Vérifie que la trajectoire complète reste hors du PML
+    entre t=0 et t=t_total.
+    """
+    L = params["L"]
+    t_total = params["t_total"]
+
+    epaisseur_pml_m = params["epaisseur_pml_ratio"] * L
+    borne_min = epaisseur_pml_m + marge_bord_m
+    borne_max = L - epaisseur_pml_m - marge_bord_m
+
+    x_fin = x0 + vx * t_total
+    y_fin = y0 + vy * t_total
+
+    return (
+        borne_min <= x0 <= borne_max and
+        borne_min <= y0 <= borne_max and
+        borne_min <= x_fin <= borne_max and
+        borne_min <= y_fin <= borne_max
+    )
+
+def genere_objet_aleatoire(params, rng, marge_bord_m=120.0,
+                           vmin=0.0, vmax=20.0, max_essais=1000):
+    """
+    position initiale et une vitesse aléatoires pour l'objet
+    """
+    params_new = copy.deepcopy(params)
+    L = params_new["L"]
+
+    epaisseur_pml_m = params_new["epaisseur_pml_ratio"] * L
+    borne_min = epaisseur_pml_m + marge_bord_m
+    borne_max = L - epaisseur_pml_m - marge_bord_m
+
+    if borne_min >= borne_max:
+        raise ValueError("Zone valide trop petite pour générer un objet hors du PML.")
+
+    for _ in range(max_essais):
+        x0 = rng.uniform(borne_min, borne_max)
+        y0 = rng.uniform(borne_min, borne_max)
+
+        angle = rng.uniform(0, 2 * np.pi)
+        vitesse = rng.uniform(vmin, vmax)
+
+        vx = vitesse * np.cos(angle)
+        vy = vitesse * np.sin(angle)
+
+        if trajectoire_valide(x0, y0, vx, vy, params_new, marge_bord_m=marge_bord_m):
+            params_new["objet"]["position"] = m_to_grid(
+                params_new["L"],
+                params_new["nx"],
+                params_new["ny"],
+                (x0, y0)
+            )
+            params_new["objet"]["vitesse_m_s"] = (vx, vy)
+
+            return params_new, {
+                "position_m": (x0, y0),
+                "vitesse_m_s": (vx, vy),
+                "vitesse_norme": vitesse,
+                "angle_rad": angle,
+            }
+
+    raise RuntimeError("Impossible de générer une trajectoire valide hors du PML.")
+
+def capteurs_valides(capteurs_m, params, marge_bord_m=20.0, distance_min_m=80.0):
+    L = params["L"]
+    epaisseur_pml_m = params["epaisseur_pml_ratio"] * L
+    borne_min = epaisseur_pml_m + marge_bord_m
+    borne_max = L - epaisseur_pml_m - marge_bord_m
+
+    for x, y in capteurs_m:
+        if not (borne_min <= x <= borne_max and borne_min <= y <= borne_max):
+            return False
+
+    for i in range(len(capteurs_m)):
+        for j in range(i + 1, len(capteurs_m)):
+            xi, yi = capteurs_m[i]
+            xj, yj = capteurs_m[j]
+            d = np.sqrt((xi - xj)**2 + (yi - yj)**2)
+            if d < distance_min_m:
+                return False
+
+    return True
+
+def cout_capteurs_bo(x, params_base, n_essais=8, seed=42,
+                     marge_bord_m=20.0, distance_min_m=80.0,
+                     penalite=1e6, verbose=True):
+    """
+    x = [x1, y1, x2, y2, x3, y3] en mètres
+    """
+    capteurs_m = [
+        (x[0], x[1]),
+        (x[2], x[3]),
+        (x[4], x[5]),
+    ]
+
+    if not capteurs_valides(
+        capteurs_m,
+        params_base,
+        marge_bord_m=marge_bord_m,
+        distance_min_m=distance_min_m
+    ):
+        if verbose:
+            print(f"Capteurs invalides -> pénalité {penalite}")
+        return penalite
+
+    rng = np.random.default_rng(seed)
+    erreurs = []
+
+    params_capteurs = copy.deepcopy(params_base)
+
+    for i, (xc, yc) in enumerate(capteurs_m):
+        params_capteurs["capteurs"][i]["position"] = m_to_grid(
+            params_capteurs["L"],
+            params_capteurs["nx"],
+            params_capteurs["ny"],
+            (xc, yc)
+        )
+
+    for k in range(n_essais):
+        try:
+            params_test, info = genere_objet_aleatoire(
+                params_capteurs,
+                rng,
+                marge_bord_m=marge_bord_m,
+                vmin=0.0,
+                vmax=20.0
+            )
+
+            bilan = calcule_erreurs_multilateration(params_test)
+            err = bilan["erreur_moyenne"]
+
+            if not np.isfinite(err):
+                err = penalite
+
+            erreurs.append(err)
+
+        except Exception as e:
+            if verbose:
+                print(f"Essai {k+1} échoué : {e}")
+            erreurs.append(penalite)
+
+    cout = float(np.mean(erreurs))
+
+    if verbose:
+        print("\nConfiguration testée")
+        print(f"C1 = ({x[0]:.1f}, {x[1]:.1f}) m")
+        print(f"C2 = ({x[2]:.1f}, {x[3]:.1f}) m")
+        print(f"C3 = ({x[4]:.1f}, {x[5]:.1f}) m")
+        print(f"Coût moyen = {cout:.4f} m")
+
+    return cout
+
+def cree_scenarios_fixes(params, n_scenarios=10, seed=140,
+                         marge_bord_m=20.0, vmin=0.0, vmax=75.0):
+    """
+    Génère une liste fixe de scénarios bateau.
+    """
+    rng = np.random.default_rng(seed)
+    scenarios = []
+
+    for _ in range(n_scenarios):
+        _, info = genere_objet_aleatoire(
+            params,
+            rng,
+            marge_bord_m=marge_bord_m,
+            vmin=vmin,
+            vmax=vmax
+        )
+        scenarios.append({
+            "position_m": info["position_m"],
+            "vitesse_m_s": info["vitesse_m_s"],
+        })
+
+    return scenarios
+
+def applique_scenario_objet(params, scenario):
+    """
+    Applique une position/vitesse d'objet déjà fixée.
+    """
+    params_new = copy.deepcopy(params)
+
+    params_new["objet"]["position"] = m_to_grid(
+        params_new["L"],
+        params_new["nx"],
+        params_new["ny"],
+        scenario["position_m"]
+    )
+    params_new["objet"]["vitesse_m_s"] = scenario["vitesse_m_s"]
+
+    return params_new
+
+def construit_objectif_bo(params_base, scenarios, historique=None,
+                          marge_bord_m=20.0, distance_min_m=80.0,
+                          penalite=0, verbose=True):
+    """
+    Retourne une fonction f(x) pour l'optimisation bayésienne.
+    x = [x1, y1, x2, y2, x3, y3] en mètres
+    """
+    if historique is None:
+        historique = []
+
+    def objectif(x):
+        capteurs_m = [
+            (x[0], x[1]),
+            (x[2], x[3]),
+            (x[4], x[5]),
+        ]
+
+        if not capteurs_valides(
+            capteurs_m,
+            params_base,
+            marge_bord_m=marge_bord_m,
+            distance_min_m=distance_min_m
+        ):
+            if verbose:
+                print(f"Capteurs invalides -> pénalité {penalite}")
+            historique.append({
+                "x": list(x),
+                "cout": penalite,
+                "valide": False,
+            })
+            return penalite
+
+        params_capteurs = copy.deepcopy(params_base)
+
+        for i, (xc, yc) in enumerate(capteurs_m):
+            params_capteurs["capteurs"][i]["position"] = m_to_grid(
+                params_capteurs["L"],
+                params_capteurs["nx"],
+                params_capteurs["ny"],
+                (xc, yc)
+            )
+
+        erreurs = []
+
+        for scenario in scenarios:
+            try:
+                params_test = applique_scenario_objet(params_capteurs, scenario)
+                bilan = calcule_erreurs_multilateration(params_test)
+                err = bilan["erreur_moyenne"]
+
+                if not np.isfinite(err):
+                    err = penalite
+
+            except Exception as e:
+                if verbose:
+                    print("Essai échoué :", e)
+                err = penalite
+
+            erreurs.append(err)
+
+        cout = float(np.mean(erreurs))
+
+        historique.append({
+            "x": list(x),
+            "cout": cout,
+            "valide": True,
+            "erreurs": erreurs,
+        })
+
+        if verbose:
+            print("\nÉvaluation BO")
+            print(f"C1 = ({x[0]:.1f}, {x[1]:.1f}) m")
+            print(f"C2 = ({x[2]:.1f}, {x[3]:.1f}) m")
+            print(f"C3 = ({x[4]:.1f}, {x[5]:.1f}) m")
+            print(f"Coût moyen = {cout:.4f} m")
+
+        return cout
+
+    return objectif
+
 L = 1000.0
 nx = 250
 ny = 250
@@ -1359,18 +1712,18 @@ rayon_objet_m = 12.0
 ratio_pml = 0.2
 gamma_max = 60
 puissance = 0.4
-position_objet_m = (333.0, 765.0)
+position_objet_m = (653.42, 465.77)
 
-position_c1_m = (0.41*L, 0.43*L)
-position_c2_m = (0.65*L, 0.72*L)
-position_c3_m = (L/2, L/2)
+position_c1_m = (232.91, 513.87)
+position_c2_m = (443.92, 246.13)
+position_c3_m = (765.30, 350.35)
 
 params = {
     "L": L,
     "nx": nx,
     "ny": ny,
     "dt": 6e-4,
-    "t_total": 4,
+    "t_total": 3.2,
     "rho": 1000,
     "kappa": 2.2e9,
     "sigma": 1,                                                         
@@ -1393,11 +1746,11 @@ params = {
         "rho": 7800,
         "kappa": 1.6e11,
         "gamma": 2,
-        "vitesse_m_s": (0.0, 0.0),
+        "vitesse_m_s": (8.80, -10.820),
     },
 }
 
-MODE = 4# 1 -- simul simple, 2 -- multilateration , 3 -- boucle pour tests
+MODE = 2 # 1 -- simul simple, 2 -- multilateration , 3 -- boucle pour tests
 
 if MODE == 1 :
     resultats = run_simulation(params)
@@ -1405,8 +1758,6 @@ if MODE == 1 :
     
     plot_signaux(params, resultats)
     
-
-
 if MODE == 2 :
     # resultats = run_simulation(params)
     # animer_resultats(params, resultats)
@@ -1439,6 +1790,7 @@ if MODE == 3 :
     )
 
 if MODE == 4:
+
 
     L_mega = 2000.0
     nx_mega = 500
@@ -1527,4 +1879,128 @@ if MODE == 4:
     }
 
     with open("optimisation_pml_new.pkl", "wb") as f:
+
         pickle.dump(historique_bo, f)
+
+if MODE == 5:
+    x_test = [
+        0.35 * params["L"], 0.35 * params["L"],
+        0.70 * params["L"], 0.70 * params["L"],
+        0.55 * params["L"], 0.45 * params["L"],
+    ]
+
+    cout = cout_capteurs_bo(
+        x_test,
+        params,
+        n_essais=8,
+        seed=42,
+        marge_bord_m=20.0,
+        distance_min_m=80.0,
+        verbose=True
+    )
+
+    print(f"\nCoût retourné = {cout:.4f} m")
+
+if MODE == 6:
+    from skopt import gp_minimize
+    from skopt.space import Real
+    import pickle
+
+    marge_bord_m = 20.0
+    distance_min_m = 80.0
+    n_scenarios_train = 12
+    n_scenarios_valid = 20
+
+    L = params["L"]
+    epaisseur_pml_m = params["epaisseur_pml_ratio"] * L
+    borne_min = epaisseur_pml_m + marge_bord_m
+    borne_max = L - epaisseur_pml_m - marge_bord_m
+
+    espace = [
+        Real(borne_min, borne_max, name="x1"),
+        Real(borne_min, borne_max, name="y1"),
+        Real(borne_min, borne_max, name="x2"),
+        Real(borne_min, borne_max, name="y2"),
+        Real(borne_min, borne_max, name="x3"),
+        Real(borne_min, borne_max, name="y3"),
+    ]
+
+    scenarios_train = cree_scenarios_fixes(
+        params,
+        n_scenarios=n_scenarios_train,
+        seed=123,
+        marge_bord_m=marge_bord_m,
+        vmin=0.0,
+        vmax=20.0
+    )
+
+    historique = []
+
+    objectif = construit_objectif_bo(
+        params,
+        scenarios_train,
+        historique=historique,
+        marge_bord_m=marge_bord_m,
+        distance_min_m=distance_min_m,
+        penalite=1e6,
+        verbose=True
+    )
+
+    res = gp_minimize(
+        func=objectif,
+        dimensions=espace,
+        n_calls=15,
+        n_initial_points=6,
+        acq_func="EI",
+        random_state=42
+    )
+
+    print("\n==============================")
+    print("OPTIMISATION TERMINÉE")
+    print("Meilleur coût train :", res.fun)
+    print("Meilleure solution x :", res.x)
+
+    capteurs_best = [
+        (res.x[0], res.x[1]),
+        (res.x[2], res.x[3]),
+        (res.x[4], res.x[5]),
+    ]
+
+    print("\nMeilleurs capteurs :")
+    for i, (x, y) in enumerate(capteurs_best):
+        print(f"  C{i+1} = ({x:.2f}, {y:.2f}) m")
+
+    # Validation sur d'autres scénarios
+    scenarios_valid = cree_scenarios_fixes(
+        params,
+        n_scenarios=n_scenarios_valid,
+        seed=999,
+        marge_bord_m=marge_bord_m,
+        vmin=0.0,
+        vmax=20.0
+    )
+
+    objectif_valid = construit_objectif_bo(
+        params,
+        scenarios_valid,
+        historique=None,
+        marge_bord_m=marge_bord_m,
+        distance_min_m=distance_min_m,
+        penalite=1e6,
+        verbose=False
+    )
+
+    cout_valid = objectif_valid(res.x)
+    print("Coût validation :", cout_valid)
+
+    with open("bo_capteurs_new.pkl", "wb") as f:
+        pickle.dump({
+            "res_x": res.x,
+            "res_fun": res.fun,
+            "capteurs_best": capteurs_best,
+            "historique": historique,
+            "scenarios_train": scenarios_train,
+            "cout_valid": cout_valid,
+        }, f)
+
+    print("\nRésultats sauvés dans bo_capteurs.pkl")
